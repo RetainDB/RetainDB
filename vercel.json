@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "packages/server/Dockerfile",
+      "use": "@vercel/container"
+    }
+  ]
+}
