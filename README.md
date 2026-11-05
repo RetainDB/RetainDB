@@ -508,6 +508,13 @@ pnpm --filter @retaindb/server run db:push
 pnpm dev:server
 ```
 
+Database-client regression tests use the generated Prisma client without a running database:
+
+```bash
+pnpm --filter @retaindb/server run db:generate
+pnpm --filter @retaindb/server test
+```
+
 ## Contributing
 
 PRs are welcome. For larger changes, open an issue first with the problem, proposed behavior, and test plan.
