@@ -10,6 +10,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "README.md"
   push:
     paths:
       - ".dockerignore"
@@ -19,6 +20,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "README.md"
 
 permissions:
   contents: read
