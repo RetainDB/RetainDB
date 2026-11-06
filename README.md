@@ -100,6 +100,13 @@ docker compose up
 
 Server runs on `http://localhost:3000`.
 
+To verify the packaged Prisma client and migration CLI without network access or a running database:
+
+```bash
+docker build -t retaindb-runtime-check -f packages/server/Dockerfile .
+node scripts/check-server-image.mjs retaindb-runtime-check
+```
+
 ### Node + Postgres
 
 ```bash
