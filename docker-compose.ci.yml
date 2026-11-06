@@ -1,0 +1,12 @@
+services:
+  postgres:
+    restart: "no"
+    mem_limit: 1g
+    cpus: 1
+  server:
+    restart: "no"
+    mem_limit: 4g
+    cpus: 2
+    environment:
+      DISABLE_AUTO_EXTRACTION: "true"
+      MEMORY_SYNC_INFERENCE_ENABLED: "false"

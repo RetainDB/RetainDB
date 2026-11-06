@@ -1,0 +1,25 @@
+name: Server Compose acceptance
+
+on:
+  push:
+    branches:
+      - verify/pgvector-compose
+    paths:
+      - ".github/workflows/server-compose.yml"
+      - "docker-compose*.yml"
+      - "packages/server/**"
+      - "scripts/check-server-compose.mjs"
+      - "pnpm-lock.yaml"
+      - "package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  compose-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Exercise the packaged API with PostgreSQL and local embeddings
+        run: node scripts/check-server-compose.mjs
