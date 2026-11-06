@@ -3,14 +3,10 @@
  * Like Nia's Oracle feature - SOTA search for complex queries
  */
 
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai-client.js";
 import { prisma } from "../db/index.js";
 import { embedSingle } from "./embeddings.js";
 import { selectOracleScope } from "./oracle-select.js";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "",
-});
 
 interface DocumentTree {
   root: TreeNode;
@@ -534,7 +530,7 @@ Return JSON:
   "nextQuery": "next search query" or null
 }`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAIClient().chat.completions.create({
     model: "gpt-4o",
     max_tokens: 1024,
     temperature: 0.0,
@@ -569,7 +565,7 @@ ${steps.map((s) => `Step ${s.step}: ${s.query}\n  ${s.reasoning}`).join("\n\n")}
 
 Provide a comprehensive answer based on all the information gathered.`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAIClient().chat.completions.create({
     model: "gpt-4o",
     max_tokens: 2048,
     temperature: 0.0,

@@ -95,10 +95,13 @@ Use this path when you want the full API server with Postgres and pgvector.
 ```bash
 git clone https://github.com/retaindb/retaindb
 cd retaindb
+export ENCRYPTION_KEY="$(openssl rand -hex 32)"
 docker compose up
 ```
 
 Server runs on `http://localhost:3000`.
+
+Keep `ENCRYPTION_KEY` stable across restarts so stored agent credentials remain readable. Local BGE embeddings do not require an OpenAI key; the first request downloads the model. Set `EMBEDDING_MODE=openai` and `OPENAI_API_KEY` to use OpenAI embeddings instead. LLM extraction and research still require an OpenAI key.
 
 ### Node + Postgres
 
@@ -107,11 +110,14 @@ git clone https://github.com/retaindb/retaindb
 cd retaindb
 cp .env.example packages/server/.env
 pnpm install
-pnpm --filter @retaindb/server run db:push
+pnpm --filter @retaindb/server run db:generate
+pnpm --filter @retaindb/server exec prisma migrate deploy
 pnpm dev:server
 ```
 
 Postgres must have the `pgvector` extension enabled.
+
+Set a stable `ENCRYPTION_KEY` in `packages/server/.env` before starting the server. Apply the committed migrations with `prisma migrate deploy`; do not replace an existing database with the generated Prisma schema. The migration history also contains legacy tables not managed by the current server client.
 
 ## RetainDB Local
 
@@ -504,7 +510,8 @@ Server development:
 
 ```bash
 cp .env.example packages/server/.env
-pnpm --filter @retaindb/server run db:push
+pnpm --filter @retaindb/server run db:generate
+pnpm --filter @retaindb/server exec prisma migrate deploy
 pnpm dev:server
 ```
 
@@ -514,6 +521,18 @@ Database-client regression tests use the generated Prisma client without a runni
 pnpm --filter @retaindb/server run db:generate
 pnpm --filter @retaindb/server test
 ```
+
+To run the same suite against a dedicated PostgreSQL database with pgvector:
+
+```bash
+export DATABASE_URL=postgresql://retaindb_test@localhost:5432/retaindb_test
+pnpm --filter @retaindb/server exec prisma migrate deploy
+RETAINDB_TEST_DATABASE_URL="$DATABASE_URL" \
+  RETAINDB_TEST_LOCAL_EMBEDDINGS=true EMBEDDING_MODE=local \
+  DISABLE_AUTO_EXTRACTION=true pnpm --filter @retaindb/server test
+```
+
+The integration tests create and remove their own project data. Without `RETAINDB_TEST_DATABASE_URL`, they are reported as skipped. The vector ingestion/retrieval case additionally requires `RETAINDB_TEST_LOCAL_EMBEDDINGS=true` and downloads the BGE model on first use. The Node 20/22 CI jobs apply all migrations, repeat deployment, and run this real-database suite. These checks cover core project/source bootstrap, source versions, document vectors, asynchronous job creation, persisted sync-job reads, and API loading; they do not establish parity for every legacy table or optional agent/storage feature.
 
 ## Contributing
 

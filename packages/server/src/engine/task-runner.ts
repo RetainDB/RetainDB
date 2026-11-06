@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai-client.js";
 import { prisma } from "../db/index.js";
 import {
   newAntiDetectPage,
@@ -12,8 +12,6 @@ import {
   getPageHTML,
 } from "./browser-agent.js";
 import { extractWithSchema, diffContent } from "./page-extractor.js";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,7 +47,7 @@ function estimateCost(inputTokens: number, outputTokens: number, model: string):
 // ─── Planner ─────────────────────────────────────────────────────────────────
 
 async function planSteps(goal: string, memory: string): Promise<PlannedStep[]> {
-  const resp = await openai.chat.completions.create({
+  const resp = await getOpenAIClient().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.2,
     max_tokens: 1500,
@@ -114,7 +112,7 @@ async function synthesizeResult(
     return extractWithSchema(dataStr, outputSchema, "gpt-4o");
   }
 
-  const resp = await openai.chat.completions.create({
+  const resp = await getOpenAIClient().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.3,
     max_tokens: 2000,

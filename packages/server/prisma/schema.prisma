@@ -46,6 +46,21 @@ enum SourceStatus {
   INDEXING
   ERROR
   DISABLED
+  CONNECTING
+}
+
+enum SyncMode {
+  MANUAL
+  SCHEDULED
+  REALTIME
+}
+
+enum SourceVersionStatus {
+  STAGED
+  PROMOTING
+  ACTIVE
+  SUPERSEDED
+  FAILED
 }
 
 model Source {
@@ -59,11 +74,10 @@ model Source {
   status          SourceStatus @default(PENDING)
   activeVersionId String?
   lastSyncAt      DateTime?
-  lastSyncAt2     DateTime?    @map("last_sync_at2")
   lastSyncError   String?
   syncError       String?
   syncSchedule    String?
-  syncMode        String?
+  syncMode        SyncMode     @default(MANUAL)
   lastSyncStatus  String?
   deletedAt         DateTime?
   documentCount     Int        @default(0)
@@ -87,10 +101,10 @@ model Source {
 model SourceVersion {
   id            String   @id @default(uuid())
   sourceId      String
-  orgId         String?
+  orgId         String
   projectId     String?
   versionNumber Int
-  status        String   @default("STAGED") // STAGED | ACTIVE | SUPERSEDED
+  status        SourceVersionStatus @default(STAGED)
   documentCount Int      @default(0)
   chunkCount    Int      @default(0)
   partialFailure Boolean  @default(false)
@@ -119,6 +133,7 @@ enum DocumentStatus {
   INDEXED
   READY
   ERROR
+  EXCLUDED
 }
 
 model Document {
@@ -417,21 +432,26 @@ model SharedContext {
 
 model SyncJob {
   id              String    @id @default(uuid())
-  sourceId        String?
+  sourceId        String
   sourceVersionId String?
   type            String    @default("INCREMENTAL")
   status          String    @default("PENDING")
-  progress        Int       @default(0)
+  progress        Float     @default(0)
   traceId         String?
   parentTraceId   String?
-  error           String?
   errorMessage    String?
   errorCode       String?
   startedAt       DateTime?
-  finishedAt      DateTime?
   completedAt     DateTime?
+  documentsTotal  Int       @default(0)
+  documentsIndexed Int      @default(0)
+  documentsFailed Int       @default(0)
+  bytesProcessed  BigInt    @default(0)
+  retryCount      Int       @default(0)
+  logs            Json      @default("[]")
+  partialFailure  Boolean   @default(false)
+  warningCodes    String[]  @default([])
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
 
   @@index([sourceId])
   @@index([status])

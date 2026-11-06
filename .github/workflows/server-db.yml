@@ -8,6 +8,9 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "docker-compose.yml"
+      - ".env.example"
+      - "README.md"
   push:
     paths:
       - ".github/workflows/server-db.yml"
@@ -15,6 +18,9 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "docker-compose.yml"
+      - ".env.example"
+      - "README.md"
 
 permissions:
   contents: read
@@ -22,6 +28,27 @@ permissions:
 jobs:
   database-client:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: retaindb_test
+          POSTGRES_DB: retaindb_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U retaindb_test -d retaindb_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://retaindb_test@localhost:5432/retaindb_test
+      RETAINDB_TEST_DATABASE_URL: postgresql://retaindb_test@localhost:5432/retaindb_test
+      RETAINDB_TEST_LOCAL_EMBEDDINGS: "true"
+      EMBEDDING_MODE: local
+      DISABLE_AUTO_EXTRACTION: "true"
     strategy:
       matrix:
         node: [20, 22]
@@ -32,6 +59,9 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: corepack enable
       - run: pnpm --filter @retaindb/server... install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @retaindb/server rebuild sharp
       - run: pnpm --filter @retaindb/server run db:generate
+      - run: pnpm --filter @retaindb/server exec prisma migrate deploy
+      - run: pnpm --filter @retaindb/server exec prisma migrate deploy
       - run: pnpm --filter @retaindb/server test
       - run: pnpm --filter @retaindb/server build

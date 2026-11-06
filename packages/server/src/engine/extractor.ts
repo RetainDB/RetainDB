@@ -1,9 +1,7 @@
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai-client.js";
 import { prisma } from "../db/index.js";
 import { embedSingle } from "./embeddings.js";
 import { writeMemoryCanonical } from "./memory/write.js";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ═══════════════════════════════════════════════════════════════
 // ENTITY EXTRACTION (runs during ingestion)
@@ -63,7 +61,7 @@ Respond with JSON only:
 }`;
 
   try {
-    const res = await openai.chat.completions.create({
+    const res = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0,
@@ -207,7 +205,7 @@ Respond with JSON only:
 }`;
 
   try {
-    const res = await openai.chat.completions.create({
+    const res = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0,
