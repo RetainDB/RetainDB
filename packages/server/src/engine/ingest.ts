@@ -28,6 +28,7 @@ export interface IngestDocumentInput {
   skipEntityExtraction?: boolean;
   sourceVersionId?: string | null;
   skipSourceCountUpdate?: boolean;
+  embedTexts?: (texts: string[]) => Promise<number[][]>;
 }
 
 type EmbeddedChunk = {
@@ -160,7 +161,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
     };
   }
 
-  const embeddings = await embedSearchableChunks(chunking.chunks);
+  const embeddings = await embedSearchableChunks(chunking.chunks, input.embedTexts, Boolean(input.embedTexts));
   const embeddedByTempId = new Map(embeddings.map((entry) => [entry.tempId, entry.vector]));
   const insertedChunkIds: string[] = [];
   const chunkInsertErrors: unknown[] = [];
@@ -265,7 +266,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
   };
 }
 
-async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunks"]): Promise<EmbeddedChunk[]> {
+async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunks"], embedTexts = embed, required = false): Promise<EmbeddedChunk[]> {
   const searchable = chunks.filter((chunk) => chunk.searchable);
   const embedded: EmbeddedChunk[] = [];
 
@@ -273,8 +274,9 @@ async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunk
     const batch = searchable.slice(i, i + EMBED_BATCH_SIZE);
     let vectors: number[][] = [];
     try {
-      vectors = await embed(batch.map((chunk) => chunk.content));
+      vectors = await embedTexts(batch.map((chunk) => chunk.content));
     } catch (error: any) {
+      if (required) throw error;
       console.error(`[Ingest] Embedding batch failed — skipping ${batch.length} chunks (no semantic search for these):`, error?.message || error);
       // Don't push chunks with undefined vectors; they'd be stored but never semantically searchable
       continue;
@@ -282,6 +284,7 @@ async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunk
 
     for (let j = 0; j < batch.length; j++) {
       if (!vectors[j]) {
+        if (required) throw new Error("Missing required document embedding");
         console.warn(`[Ingest] Missing vector for chunk ${batch[j].tempId} — skipping`);
         continue;
       }

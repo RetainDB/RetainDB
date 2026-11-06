@@ -2,19 +2,24 @@ import { createHash } from "node:crypto";
 import { prisma } from "../db/index.js";
 import { hashIdempotencyPayload } from "../api/idempotency.js";
 import { ingestDocument } from "./ingest.js";
+import { embedNativeCapture, stopNativeEmbeddingProcess } from "./native-embeddings.js";
 
 export function redactCapture(value: unknown): unknown {
   if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed && typeof parsed === "object") return JSON.stringify(redactCapture(parsed));
+    } catch {}
     return value
       .replace(/\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g, "[REDACTED]")
       .replace(/(\bBearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[REDACTED]")
-      .replace(/(["']?(?:api[_-]?key|access[_-]?token|token|secret|password)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi, "$1[REDACTED]");
+      .replace(/(["']?(?:[a-z][a-z0-9]*[_-])*(?:api[_-]?key|(?:access|refresh|auth)[_-]?token|token|secret(?:[_-]?access[_-]?key)?|password|private[_-]?key)["']?\s*[:=]\s*)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^"',\s}]+)/gi, "$1[REDACTED]");
   }
   if (Array.isArray(value)) return value.map(redactCapture);
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
       key,
-      /^(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)$/i.test(key)
+      /(?:^|[_-])(?:authorization|api[_-]?key|(?:access|refresh|auth)[_-]?token|token|secret(?:[_-]?access[_-]?key)?|password|private[_-]?key)$/i.test(key)
         ? "[REDACTED]" : redactCapture(entry),
     ]));
   }
@@ -81,10 +86,12 @@ interface PendingCapture {
 }
 
 async function indexCapture(message: PendingCapture): Promise<string> {
+  const deadline = Date.now() + 120_000;
+  const sourceName = `native-agent-hooks-${message.projectId}`;
   const source = await prisma.source.upsert({
-    where: { projectId_name: { projectId: message.projectId, name: "native-agent-hooks" } },
+    where: { projectId_name: { projectId: message.projectId, name: sourceName } },
     create: {
-      orgId: message.orgId, projectId: message.projectId, name: "native-agent-hooks",
+      orgId: message.orgId, projectId: message.projectId, name: sourceName,
       type: "text", connectorType: "native_agent_hook", config: {}, status: "INDEXING",
     },
     update: {},
@@ -93,6 +100,7 @@ async function indexCapture(message: PendingCapture): Promise<string> {
     sourceId: source.id, projectId: message.projectId, externalId: message.id,
     title: `${message.metadata.hook_type} (${message.externalSessionId})`, content: message.content,
     ingestionProfile: "plain_text", strategyOverride: "fixed", skipEntityExtraction: true,
+    embedTexts: texts => embedNativeCapture(texts, deadline - Date.now()),
     metadata: {
       ...message.metadata, native_capture_state: undefined,
       event_id: message.id, session_id: message.externalSessionId, source: "native_agent_hook",
@@ -164,5 +172,8 @@ export function startNativeCaptureWorker(): () => void {
   }, 1000);
   timer.unref();
   void drainNativeCaptures().catch(error => console.error("[NativeCapture] Recovery failed:", error));
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    void stopNativeEmbeddingProcess();
+  };
 }

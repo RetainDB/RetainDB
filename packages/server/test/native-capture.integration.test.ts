@@ -35,7 +35,7 @@ run("native hook events persist, replay once, recover pending work and retrieve 
   const payload = {
     project: projectName, sessionId: "shared-external-session", hookType: "user_prompt_submit", agent_id: "native-fixture-agent",
     timestamp: "2026-11-06T12:00:00.000Z",
-    data: { prompt: "PostgreSQL recovery must verify backup checksums before restoring database partitions.", api_key: "fixture-sensitive-value" },
+    data: { prompt: "PostgreSQL recovery must verify backup checksums before restoring database partitions.", api_key: "fixture-sensitive-value", env: { RETAINDB_API_KEY: "fixture-env-sensitive-value" }, details: 'password="fixture quoted secret phrase"' },
   };
   const responses = await Promise.all(Array.from({ length: 4 }, () => request("/retaindb/observe", payload)));
   assert.ok(responses.every(result => result.accepted && result.event_id === responses[0].event_id));
@@ -46,6 +46,8 @@ run("native hook events persist, replay once, recover pending work and retrieve 
   assert.equal(message.session.messageCount, 1);
   assert.equal(message.session.agentId, payload.agent_id);
   assert.ok(!JSON.stringify(message).includes("fixture-sensitive-value"));
+  assert.ok(!JSON.stringify(message).includes("fixture-env-sensitive-value"));
+  assert.ok(!JSON.stringify(message).includes("secret phrase"));
   assert.ok(message.content.includes("[REDACTED]"));
   assert.equal(message.createdAt.toISOString(), payload.timestamp);
 
@@ -108,6 +110,11 @@ run("native hook events persist, replay once, recover pending work and retrieve 
     });
     assert.equal(secondProject.context, "");
     assert.notEqual(secondProject.context_hash, pack.context_hash);
+    const otherProjectCapture = await request("/retaindb/observe", {
+      ...payload, project: `${projectName}-isolated`, data: { prompt: "This separate project also needs independent native indexing." },
+    });
+    await drainNativeCaptures();
+    assert.equal((await request(`/v1/agent-events/${otherProjectCapture.event_id}`)).status, "indexed");
 
     await db.$executeRaw`
       UPDATE messages SET metadata = (metadata - 'document_id') || jsonb_build_object(
@@ -159,6 +166,9 @@ after(async () => {
   if (databaseUrl) {
     const { drainNativeCaptures } = await import(capturePath);
     await drainNativeCaptures();
+    const embeddingsPath = "../src/engine/native-embeddings.js";
+    const { stopNativeEmbeddingProcess } = await import(embeddingsPath);
+    await stopNativeEmbeddingProcess();
     await delay(100);
     const { db } = await import("../src/db/index.js");
     await db.project.deleteMany({ where: { name: { in: [projectName, `${projectName}-isolated`] } } });

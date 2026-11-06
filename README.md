@@ -141,6 +141,13 @@ its receipt. `GET /v1/agent-events/:eventId` reports `pending`, `processing`
 or `indexed`, including retry diagnostics when embedding fails. Credentials
 are redacted before captured data is persisted.
 
+Native capture embeddings run in a reusable child process with a bounded
+attempt deadline (120 seconds by default; `NATIVE_CAPTURE_EMBEDDING_TIMEOUT_MS`
+can lower it). A stalled process is terminated before its event is retried,
+so it cannot retain the queue or perform late database writes. Receipt and
+document writes remain in the Server process under exclusive database row
+ownership, which is released immediately if that process exits.
+
 The vector-index migration replaces the initially empty IVFFlat indexes
 with HNSW indexes. HNSW does not require training data, so retrieval can
 work immediately after the first import without rebuilding an index.

@@ -39,6 +39,7 @@ runCheck([
     const { PrismaClient } = require("@prisma/client");
     assert.equal(cli.version, client.version);
     await access("packages/server/dist/index.js");
+    await access("packages/server/dist/engine/workers/native-embedding-process.js");
     await access("packages/server/prisma/schema.prisma");
     await access("packages/server/prisma/migrations");
     const db = new PrismaClient();
