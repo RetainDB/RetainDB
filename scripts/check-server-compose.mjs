@@ -54,9 +54,12 @@ async function waitForReady() {
   throw new Error("Compose API and local embedding model did not become ready");
 }
 
+const keepAlive = setInterval(() => {}, 1000);
 try {
+  console.log("Building and starting isolated Compose runtime");
   compose(["up", "--detach", "--build", "--wait", "--wait-timeout", "180"], 900_000);
   await waitForReady();
+  console.log("Compose API, migrations and local model ready");
   assert.equal((await fetch(`${baseUrl}/v1/projects`)).status, 401);
   const migrations = Number(query('SELECT COUNT(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL'));
   assert.ok(migrations >= 13);
@@ -91,6 +94,7 @@ try {
   assert.ok(retrieval.results.length > 0);
   assert.equal(retrieval.results[0].retrieval_source, "vector");
   assert.ok(retrieval.context.includes("backup checksum"));
+  console.log("Vector ingestion and retrieval passed");
 
   const queued = await request("/v1/learn", {
     mode: "text", project: name, title: "Queued database recovery",
@@ -122,6 +126,7 @@ try {
     include_chunks: false, include_relations: false, include_pending: false, profile: "fast",
   });
   assert.ok(memories.results.some(result => result.memory.id === memory.memory_id));
+  console.log("Queued ingestion and canonical memory recall passed");
 
   compose(["restart", "server"]);
   await waitForReady();
@@ -132,6 +137,7 @@ try {
     compress: false, use_cache: false, top_k: 3,
   });
   assert.ok(afterRestart.results.length > 0);
+  console.log("Initial restart persistence passed");
 
   const observation = {
     project: name, sessionId: "compose-compatibility", hookType: "session_start", agent_id: "compose-agent",
@@ -141,6 +147,7 @@ try {
   assert.equal(observe.accepted, true);
   const replay = await request("/retaindb/observe", observation, 3000);
   assert.equal(replay.event_id, observe.event_id);
+  console.log("Native event accepted durably; restarting during indexing");
   compose(["restart", "server"]);
   await waitForReady();
   let captured;
@@ -150,6 +157,7 @@ try {
     await delay(500);
   }
   assert.equal(captured.status, "indexed", JSON.stringify(captured));
+  console.log("Native event recovered after restart");
   assert.equal(query(`SELECT COUNT(*) FROM messages WHERE id='${observe.event_id}'`), "1");
   assert.equal(query(`SELECT COUNT(*) FROM chunks WHERE "documentId"='${captured.document_id}' AND vector_dims(embedding)=1024`), "1");
   assert.equal(query(`SELECT COUNT(*) FROM messages WHERE id='${observe.event_id}' AND content LIKE '%private-fixture-value%'`), "0");
@@ -190,5 +198,9 @@ try {
   try { process.stderr.write(compose(["logs", "--no-color", "--tail", "200"])); } catch {}
   throw error;
 } finally {
-  compose(["down", "--volumes", "--remove-orphans", "--rmi", "local"], 120_000);
+  try {
+    compose(["down", "--volumes", "--remove-orphans", "--rmi", "local"], 120_000);
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
