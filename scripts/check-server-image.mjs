@@ -11,6 +11,7 @@ const result = spawnSync(engine, [
     import assert from "node:assert/strict";
     import { createRequire } from "node:module";
     import { access } from "node:fs/promises";
+    assert.equal(process.cwd(), "/app", "Preserve the runtime root for relative storage paths");
     const require = createRequire(import.meta.url);
     const cli = require("prisma/package.json");
     const client = require("@prisma/client/package.json");
