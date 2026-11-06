@@ -91,6 +91,7 @@ model Source {
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   documents Document[]
   versions  SourceVersion[]
+  syncJobs  SyncJob[]
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -452,6 +453,8 @@ model SyncJob {
   partialFailure  Boolean   @default(false)
   warningCodes    String[]  @default([])
   createdAt       DateTime  @default(now())
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@index([sourceId])
   @@index([status])

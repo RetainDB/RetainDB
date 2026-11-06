@@ -163,6 +163,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
   const embeddings = await embedSearchableChunks(chunking.chunks);
   const embeddedByTempId = new Map(embeddings.map((entry) => [entry.tempId, entry.vector]));
   const insertedChunkIds: string[] = [];
+  const chunkInsertErrors: unknown[] = [];
   const insertedLeafChunkIds: Array<{ tempId: string; chunkId: string }> = [];
 
   // Pre-assign UUIDs so parent IDs are known before any insert runs.
@@ -220,7 +221,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
         insertedLeafChunkIds.push({ tempId: chunk.tempId, chunkId: id });
       }
     } catch (error: any) {
-      console.error("[Ingest] Chunk insert failed:", error?.message || error);
+      chunkInsertErrors.push(error);
     }
   };
 
@@ -228,7 +229,16 @@ export async function ingestDocument(input: IngestDocumentInput) {
   const roots = chunking.chunks.filter((c) => !c.parentTempId);
   const children = chunking.chunks.filter((c) => c.parentTempId);
   await Promise.all(roots.map(insertChunk));
-  if (children.length > 0) await Promise.all(children.map(insertChunk));
+  if (chunkInsertErrors.length === 0 && children.length > 0) await Promise.all(children.map(insertChunk));
+  if (chunkInsertErrors.length > 0) {
+    await prisma.chunk.deleteMany({ where: { documentId: doc.id } });
+    await prisma.document.update({
+      where: { id: doc.id },
+      data: { status: "ERROR", parseError: "Failed to persist document chunks" },
+    });
+    if (!input.skipSourceCountUpdate) await updateSourceCounts(sourceId, sourceVersionId);
+    throw new AggregateError(chunkInsertErrors, "Failed to persist document chunks");
+  }
 
   if (ENABLE_AUTO_EXTRACTION && !input.skipEntityExtraction) {
     const searchableChunks = chunking.chunks

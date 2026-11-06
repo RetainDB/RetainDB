@@ -532,7 +532,7 @@ RETAINDB_TEST_DATABASE_URL="$DATABASE_URL" \
   DISABLE_AUTO_EXTRACTION=true pnpm --filter @retaindb/server test
 ```
 
-The integration tests create and remove their own project data. Without `RETAINDB_TEST_DATABASE_URL`, they are reported as skipped. The vector ingestion/retrieval case additionally requires `RETAINDB_TEST_LOCAL_EMBEDDINGS=true` and downloads the BGE model on first use. The Node 20/22 CI jobs apply all migrations, repeat deployment, and run this real-database suite. These checks cover core project/source bootstrap, source versions, document vectors, asynchronous job creation, persisted sync-job reads, and API loading; they do not establish parity for every legacy table or optional agent/storage feature.
+The integration tests create and remove their own project data and a temporary chunk constraint for failure injection. Use a dedicated test database, never a production memory store. Without `RETAINDB_TEST_DATABASE_URL`, these tests are reported as skipped. Vector ingestion/retrieval and queued-document checks additionally require `RETAINDB_TEST_LOCAL_EMBEDDINGS=true` and download the BGE model on first use. The Node 20/22 CI jobs apply all migrations, repeat deployment, and run this real-database suite. These checks cover the ownerless `default` organization without a fabricated user, retained tenant/project foreign keys, source versions, document vectors, queued document processing, persistence-failure reporting, connector job health, and API loading; they do not establish parity for every legacy table or optional agent/storage feature.
 
 ## Contributing
 

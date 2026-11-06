@@ -301,6 +301,13 @@ class IngestionQueue {
         });
       }
 
+      const failures = await prisma.$queryRaw<Array<{ count: bigint | string }>>`
+        SELECT COUNT(*) AS count FROM ingestion_documents WHERE job_id = ${jobId} AND status = 'FAILED'
+      `;
+      if (Number(failures[0]?.count || 0) > 0) {
+        throw new Error("One or more ingestion documents failed");
+      }
+
       // Get final chunk count
       const chunkCounts = await prisma.$queryRaw<any[]>`
         SELECT total_chunks, processed_chunks FROM ingestion_jobs WHERE id = ${jobId}
