@@ -680,7 +680,7 @@ model AgentResearchSession {
 
 model Webhook {
   id              String   @id @default(uuid())
-  projectId       String?
+  sourceId        String?
   orgId           String   @default("default")
   url             String
   events          String[] @default([])
@@ -690,14 +690,13 @@ model Webhook {
   lastDeliveredAt DateTime?
   lastStatusCode  Int?
   failureCount    Int      @default(0)
-  lastError       String?
+  status          String   @default("ACTIVE")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   deliveries WebhookDelivery[]
 
   @@index([orgId])
-  @@index([projectId])
   @@map("webhooks")
 }
 
@@ -706,17 +705,17 @@ model WebhookDelivery {
   webhookId   String
   event       String
   eventId     String?
-  action      String?
+  action      String   @default("deliver")
   attempt     Int      @default(1)
   durationMs  Int?
   payload     Json     @default("{}")
   statusCode  Int?
-  success     Boolean  @default(false)
-  error       String?
+  responseBody String?
+  errorMessage String?
+  errorCode    String?
   traceId     String?
-  deliveredAt DateTime?
-  attemptedAt DateTime @default(now())
-  createdAt   DateTime @default(now())
+  parentTraceId String?
+  deliveredAt DateTime? @default(now())
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 

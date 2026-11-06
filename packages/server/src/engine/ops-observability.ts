@@ -301,15 +301,15 @@ export async function getWebhookFailureSummary(params?: { lookbackHours?: number
   const [recentFailures, deliveryCounts] = await Promise.all([
     prisma.webhookDelivery.findMany({
       where: {
-        createdAt: { gte: since },
+        deliveredAt: { gte: since },
         errorCode: { not: null },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { deliveredAt: "desc" },
       take: 25,
     }),
     prisma.webhookDelivery.groupBy({
       by: ["event"],
-      where: { createdAt: { gte: since } },
+      where: { deliveredAt: { gte: since } },
       _count: { _all: true },
     }),
   ]);

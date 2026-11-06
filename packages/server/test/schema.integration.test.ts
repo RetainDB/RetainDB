@@ -225,6 +225,27 @@ run("loads the self-hosted API without an OpenAI credential", async () => {
   assert.ok(Array.isArray((await response.json()).projects));
 });
 
+run("runs scheduled operational health against the migrated webhook delivery schema", async () => {
+  const { db } = await import("../src/db/index.js");
+  const hook = await db.webhook.create({
+    data: { orgId: "default", url: "http://127.0.0.1:1/not-called", events: ["document.indexed"], isActive: false },
+  });
+  const delivery = await db.webhookDelivery.create({
+    data: { webhookId: hook.id, event: "document.indexed", payload: {}, errorCode: "DELIVERY_FAILED", errorMessage: "Fixture failure", responseBody: "Fixture response", parentTraceId: fixtureId },
+  });
+  const modulePath = "../src/engine/ops-observability.js";
+  const { evaluateOperationalAlerts } = await import(modulePath);
+  try {
+    const result = await evaluateOperationalAlerts();
+    assert.ok(Array.isArray(result.alerts));
+    assert.ok(result.webhooks.recent_failures.some(item => item.id === delivery.id && item.errorCode === "DELIVERY_FAILED"));
+    assert.ok(result.webhooks.deliveries.some(item => item.event === "document.indexed"));
+  } finally {
+    await db.webhookDelivery.delete({ where: { id: delivery.id } });
+    await db.webhook.delete({ where: { id: hook.id } });
+  }
+});
+
 run("reports chunk persistence failures instead of successful ingestion", async () => {
   const { ensureProject } = await import("../src/api/helpers.js");
   const { db } = await import("../src/db/index.js");

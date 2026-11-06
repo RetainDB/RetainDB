@@ -194,6 +194,8 @@ try {
     vector_retrieval: "passed", queued_ingestion: "passed", memory_write_and_recall: "passed",
     restart_persistence: "passed", native_capture_and_replay: "passed", native_context_and_compression: "passed",
   }));
+  const finalLogs = compose(["logs", "--no-color", "server"]);
+  assert.ok(!/Operational maintenance failed|Unhandled error|Uncaught Exception/.test(finalLogs), "Unexpected runtime errors in Server logs");
 } catch (error) {
   try { process.stderr.write(compose(["logs", "--no-color", "--tail", "200"])); } catch {}
   throw error;
