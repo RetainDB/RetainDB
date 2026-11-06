@@ -18,6 +18,7 @@
   "scripts": {
     "build": "tsup src/cli.ts --format esm --out-dir dist",
     "dev": "tsx src/cli.ts",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

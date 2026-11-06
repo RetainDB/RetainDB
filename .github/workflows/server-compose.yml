@@ -1,6 +1,15 @@
 name: Server Compose acceptance
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/server-compose.yml"
+      - "docker-compose*.yml"
+      - "packages/server/**"
+      - "packages/local/**"
+      - "scripts/check-server-compose.mjs"
+      - "pnpm-lock.yaml"
+      - "package.json"
   push:
     branches:
       - verify/pgvector-compose
@@ -8,6 +17,7 @@ on:
       - ".github/workflows/server-compose.yml"
       - "docker-compose*.yml"
       - "packages/server/**"
+      - "packages/local/**"
       - "scripts/check-server-compose.mjs"
       - "pnpm-lock.yaml"
       - "package.json"
@@ -21,5 +31,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+      - run: corepack enable
+      - run: pnpm --filter @retaindb/local... install --frozen-lockfile
+      - run: pnpm --filter @retaindb/local test
       - name: Exercise the packaged API with PostgreSQL and local embeddings
         run: node scripts/check-server-compose.mjs

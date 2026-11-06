@@ -126,6 +126,37 @@ Postgres must have the `pgvector` extension enabled.
 
 Set a stable `ENCRYPTION_KEY` in `packages/server/.env` before starting the server. Apply the committed migrations with `prisma migrate deploy`; do not replace an existing database with the generated Prisma schema. The migration history also contains legacy tables not managed by the current server client.
 
+### Coding-agent hooks with PostgreSQL
+
+The Server accepts the native Local hooks at `POST /retaindb/observe` and
+`POST /v1/agent-events`. Point `RETAINDB_BASE_URL` at the Server and set
+`RETAINDB_API_KEY` for both the hook process and Server. Keep the existing
+project and session identifiers in the hook payload.
+
+A successful capture returns HTTP 202 only after the event is committed to
+PostgreSQL. It is not a claim that embeddings are ready. The Server indexes
+accepted events in the background with the configured embedding provider;
+pending events resume after restart. Repeating the same event payload reuses
+its receipt. `GET /v1/agent-events/:eventId` reports `pending`, `processing`
+or `indexed`, including retry diagnostics when embedding fails. Credentials
+are redacted before captured data is persisted.
+
+The vector-index migration replaces the initially empty IVFFlat indexes
+with HNSW indexes. HNSW does not require training data, so retrieval can
+work immediately after the first import without rebuilding an index.
+
+The Server also supports `POST /v1/context/pack`, `POST /v1/context/delta`
+and `POST /v1/context/compress-output` without a cloud model. Context packs
+combine indexed documents and memories within the requested project and
+token budget. An unchanged context hash returns an empty delta. Client `cwd`
+and `files` paths are diagnosed, not read from the Server filesystem; ingest
+those files through the source APIs first.
+
+To exercise the packaged Server, migrations, vectors, hook receipts,
+authentication and restart recovery in a disposable Compose project, run
+`node scripts/check-server-compose.mjs`. The script removes only its own
+containers, image and database volume when it finishes.
+
 ## RetainDB Local
 
 RetainDB Local is an agent-native memory runtime for coding workflows.

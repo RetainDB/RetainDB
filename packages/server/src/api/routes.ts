@@ -34,6 +34,7 @@ import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { memoryRoutes } from "./memory.js";
 import { contextRoutes } from "./context.js";
+import { nativeHookRoutes } from "./native-hooks.js";
 import { optimizationRoutes } from "./optimization.js";
 import { searchRoutes } from "./search.js";
 import { fileRoutes } from "./files.js";
@@ -207,6 +208,7 @@ api.use("/*", async (c, next) => {
 // Mount SOTA memory, context, and optimization APIs
 api.route("/", memoryRoutes);
 api.route("/", contextRoutes);
+api.route("/", nativeHookRoutes);
 api.route("/", optimizationRoutes);
 api.route("/", searchRoutes);
 api.route("/", fileRoutes);
@@ -3601,4 +3603,3 @@ api.post(
 );
 
 // ─── SimpleClaw Provisioning (Admin only) ────────────────────
-

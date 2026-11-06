@@ -76,13 +76,21 @@ export async function ensureProject(
 
   // Auto-create the project — never 404 on a missing project
   const slug = slugifyRef(ref);
-  return prisma.project.create({
-    data: {
-      orgId,
-      name: ref,
-      slug: slug || DEFAULT_PROJECT_REF,
-    },
-  });
+  try {
+    return await prisma.project.create({
+      data: {
+        orgId,
+        name: ref,
+        slug: slug || DEFAULT_PROJECT_REF,
+      },
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const concurrent = await resolveProjectReference(orgId, ref, isAdmin);
+      if (concurrent) return concurrent;
+    }
+    throw error;
+  }
 }
 
 export function getEffectiveOrgId(

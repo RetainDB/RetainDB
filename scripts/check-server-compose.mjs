@@ -133,15 +133,58 @@ try {
   });
   assert.ok(afterRestart.results.length > 0);
 
-  const observe = await fetch(`${baseUrl}/retaindb/observe`, {
-    method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ project: name, sessionId: "compose-compatibility", hookType: "session_start", data: {} }),
-    signal: AbortSignal.timeout(5000),
+  const observation = {
+    project: name, sessionId: "compose-compatibility", hookType: "session_start", agent_id: "compose-agent",
+    timestamp: new Date().toISOString(), data: { prompt: "Restore PostgreSQL only after verifying backup checksums.", token: "private-fixture-value" },
+  };
+  const observe = await request("/retaindb/observe", observation, 3000);
+  assert.equal(observe.accepted, true);
+  const replay = await request("/retaindb/observe", observation, 3000);
+  assert.equal(replay.event_id, observe.event_id);
+  compose(["restart", "server"]);
+  await waitForReady();
+  let captured;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    captured = await request(`/v1/agent-events/${observe.event_id}`);
+    if (captured.status === "indexed") break;
+    await delay(500);
+  }
+  assert.equal(captured.status, "indexed", JSON.stringify(captured));
+  assert.equal(query(`SELECT COUNT(*) FROM messages WHERE id='${observe.event_id}'`), "1");
+  assert.equal(query(`SELECT COUNT(*) FROM chunks WHERE "documentId"='${captured.document_id}' AND vector_dims(embedding)=1024`), "1");
+  assert.equal(query(`SELECT COUNT(*) FROM messages WHERE id='${observe.event_id}' AND content LIKE '%private-fixture-value%'`), "0");
+  const event = await request("/v1/agent-events", {
+    project: name, session_id: "compose-cli-hook", agent_id: "compose-agent",
+    event: { kind: "tool_result", summary: "Backup verification succeeded before PostgreSQL recovery.", timestamp: new Date().toISOString() },
+  }, 3000);
+  assert.equal(event.accepted, true);
+  const plugin = spawnSync(process.execPath, ["--input-type=module", "--eval", `
+    import { capture } from './packages/local/plugin/scripts/_capture.mjs';
+    await capture('session_start', { session_id: 'packaged-native-plugin', prompt: 'Retain the PostgreSQL backup checksum before recovery.' });
+  `], {
+    encoding: "utf8", timeout: 10_000,
+    env: { ...environment, RETAINDB_BASE_URL: baseUrl, RETAINDB_PROJECT: name, RETAINDB_SDK_CHILD: "0" },
   });
+  assert.equal(plugin.status, 0, plugin.stderr);
+  assert.equal(query("SELECT COUNT(*) FROM messages m JOIN sessions s ON s.id=m.\"sessionId\" WHERE s.\"sessionId\"='packaged-native-plugin'"), "1");
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (query("SELECT COUNT(*) FROM messages WHERE metadata->>'native_capture_state' != 'indexed'") === "0") break;
+    await delay(500);
+  }
+  assert.equal(query("SELECT COUNT(*) FROM messages WHERE metadata->>'native_capture_state' != 'indexed'"), "0");
+  const pack = await request("/v1/context/pack", { project: name, query: "PostgreSQL backup checksum recovery", token_budget: 400 });
+  assert.ok(pack.context.includes("backup"));
+  assert.ok(pack.estimated_tokens <= 400);
+  const delta = await request("/v1/context/delta", { project: name, query: "PostgreSQL backup checksum recovery", token_budget: 400, previous_context_hash: pack.context_hash });
+  assert.equal(delta.unchanged, true);
+  assert.equal(delta.delta_context, "");
+  const compressed = await request("/v1/context/compress-output", { output: `${"ordinary output\n".repeat(100)}ERROR: restore failed`, token_budget: 50 });
+  assert.ok(compressed.compressed.includes("restore failed"));
+  assert.ok(compressed.estimated_tokens <= 50);
   console.log(JSON.stringify({
     project: name, migrations, chunks, vectors, dimensions,
     vector_retrieval: "passed", queued_ingestion: "passed", memory_write_and_recall: "passed",
-    restart_persistence: "passed", native_observe_status: observe.status,
+    restart_persistence: "passed", native_capture_and_replay: "passed", native_context_and_compression: "passed",
   }));
 } catch (error) {
   try { process.stderr.write(compose(["logs", "--no-color", "--tail", "200"])); } catch {}

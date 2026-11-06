@@ -2523,6 +2523,9 @@ function installUserConfigs(target = "all") {
 
 async function runHook() {
   const baseUrl = process.env.RETAINDB_BASE_URL || `http://localhost:${DEFAULT_PORT}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const apiKey = process.env.RETAINDB_API_KEY;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const kind = arg("kind") || "tool_result";
   const agentId = arg("agent") || process.env.RETAINDB_AGENT_ID || "agent";
   const sessionId = arg("session") || process.env.RETAINDB_SESSION_ID || `session-${new Date().toISOString().slice(0, 10)}`;
@@ -2543,7 +2546,7 @@ async function runHook() {
     try {
       const res = await fetch(`${baseUrl}/v1/context/pack`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           project,
           query: summaryArg || data.prompt || data.message || data.tool_input || data.tool_name || kind,
@@ -2566,7 +2569,7 @@ async function runHook() {
       if (raw.length > 1200) {
         const res = await fetch(`${baseUrl}/v1/context/compress-output`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ output: raw, token_budget: Number(process.env.RETAINDB_TOKEN_BUDGET || 1200) }),
         });
         if (res.ok) {
@@ -2582,7 +2585,7 @@ async function runHook() {
   const summary = summaryArg || stdin.slice(0, 4000).trim() || `${agentId} ${kind}`;
   await fetch(`${baseUrl}/v1/agent-events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       project,
       session_id: sessionId,

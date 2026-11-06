@@ -30,6 +30,19 @@ run("provisions the default organization and retains tenant references", async (
   }), (error: unknown) => error instanceof Error && "code" in error && error.code === "P2003");
 });
 
+run("uses vector indexes that support initially empty databases without training", async () => {
+  const { db } = await import("../src/db/index.js");
+  const indexes = await db.$queryRaw<Array<{ tablename: string; indexdef: string }>>`
+    SELECT tablename, indexdef FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename IN ('chunks', 'memories', 'entities')
+      AND indexdef LIKE '%embedding%'
+  `;
+  for (const table of ["chunks", "memories", "entities"]) {
+    assert.ok(indexes.some(index => index.tablename === table && index.indexdef.includes("USING hnsw")), table);
+    assert.ok(!indexes.some(index => index.tablename === table && index.indexdef.includes("USING ivfflat")), table);
+  }
+});
+
 run("creates and resolves the default OSS project after production migrations", async () => {
   const { ensureProject } = await import("../src/api/helpers.js");
   const name = `bootstrap-${fixtureId}`;
