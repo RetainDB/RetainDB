@@ -1,0 +1,33 @@
+name: Server runtime image
+
+on:
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/server-image.yml"
+      - "packages/server/**"
+      - "scripts/check-server-image.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/server-image.yml"
+      - "packages/server/**"
+      - "scripts/check-server-image.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: docker build --tag retaindb-runtime-check --file packages/server/Dockerfile .
+      - run: node scripts/check-server-image.mjs retaindb-runtime-check
