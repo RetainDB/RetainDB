@@ -241,7 +241,10 @@ export async function searchMemories(
 
   // Step 0a: Check simple cache first (before embedding!)
   const step0Start = Date.now();
-  const cacheKey = `search:${projectId}:${userId || ""}:${sessionId || ""}:${agentId || ""}:${taskId || ""}:${applicableScopes.join(",")}:${query}:${topK}`;
+  const cacheScope = JSON.stringify({ orgId, projectId, userId, sessionId, agentId, taskId,
+    scopes: applicableScopes, includeInactive, memoryTypes: effectiveMemoryTypes, namespace, tags,
+    temporalFilter: params.temporalFilter, questionDate: questionDate.toISOString().slice(0, 10), topK, fastMode });
+  const cacheKey = `search:${projectId}:${userId || ""}:${cacheScope}:${query}`;
   const simpleCached = await getFromCache<MemorySearchResult[]>(cacheKey);
   timings.push({ step: "simple_cache", duration: Date.now() - step0Start });
   
@@ -261,7 +264,7 @@ export async function searchMemories(
   timings.push({ step: "embedding", duration: Date.now() - embedStart });
 
   const semanticCacheStart = Date.now();
-  const cached = await getFromSemanticCache(queryEmbedding);
+  const cached = await getFromSemanticCache(queryEmbedding, cacheScope);
   timings.push({ step: "semantic_cache_check", duration: Date.now() - semanticCacheStart });
 
   if (cached && cached.similarity >= SEMANTIC_CACHE_THRESHOLD) {
@@ -321,10 +324,10 @@ export async function searchMemories(
   // Step 3: Early exit if top result is excellent
   if (!queryIntent.wantsRecent && scopedSemanticResults.length > 0 && scopedSemanticResults[0].similarity >= EARLY_EXIT_SIMILARITY) {
     console.log(`⚡ Early exit at ${scopedSemanticResults[0].similarity.toFixed(3)}`);
-    const topMemories = scopedSemanticResults.slice(0, topK);
+    const topMemories = scopedSemanticResults.slice(0, topK).map(toMemorySearchResult);
     
     // Cache good results
-    await setInSemanticCache(queryEmbedding, topMemories, 300);
+    await setInSemanticCache(queryEmbedding, topMemories, 300, cacheScope);
     await setInCache(cacheKey, topMemories, 300); // 5 min cache
     
     const total = Date.now() - startTotal;
@@ -390,29 +393,7 @@ export async function searchMemories(
 
   if (effectiveFastMode || shouldSkipChunkInjection) {
     // Fast mode: skip chunk injection, return memories directly
-    results = finalResults.map((m) => ({
-      memory: {
-        id: m.id,
-        content: m.content,
-        memoryType: m.memoryType,
-        entityMentions: m.entityMentions || [],
-        confidence: m.confidence,
-        version: m.version,
-        scope: m.scope,
-        scopeTarget: m.scope,
-        userId: m.userId ?? null,
-        sessionId: m.sessionId ?? null,
-        agentId: m.agentId ?? null,
-        taskId: m.taskId ?? null,
-        temporal: {
-          documentDate: m.documentDate,
-          eventDate: m.eventDate,
-          validFrom: m.validFrom,
-          validUntil: m.validUntil,
-        },
-      },
-      similarity: m.similarity,
-    }));
+    results = finalResults.map(toMemorySearchResult);
     timings.push({ step: "chunk_injection", duration: 0 });
   } else {
     const chunkStart = Date.now();
@@ -422,7 +403,7 @@ export async function searchMemories(
 
   // Cache results for similar queries
   const cacheWriteStart = Date.now();
-  await setInSemanticCache(queryEmbedding, results, 300);
+  await setInSemanticCache(queryEmbedding, results, 300, cacheScope);
   await setInCache(cacheKey, results, 300); // 5 min cache
   timings.push({ step: "cache_write", duration: Date.now() - cacheWriteStart });
 
@@ -435,6 +416,19 @@ export async function searchMemories(
   emitDiagnostics(params, timings, total, cacheHitType, effectiveFastMode);
 
   return results;
+}
+
+function toMemorySearchResult(memory: any): MemorySearchResult {
+  return {
+    memory: {
+      id: memory.id, content: memory.content, memoryType: memory.memoryType,
+      entityMentions: memory.entityMentions || [], confidence: memory.confidence, version: memory.version,
+      scope: memory.scope, scopeTarget: memory.scope, userId: memory.userId ?? null,
+      sessionId: memory.sessionId ?? null, agentId: memory.agentId ?? null, taskId: memory.taskId ?? null,
+      temporal: { documentDate: memory.documentDate, eventDate: memory.eventDate, validFrom: memory.validFrom, validUntil: memory.validUntil },
+    },
+    similarity: memory.similarity,
+  };
 }
 
 /**

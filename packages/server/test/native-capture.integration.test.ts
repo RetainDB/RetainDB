@@ -63,6 +63,31 @@ run("native hook events persist, replay once, recover pending work and retrieve 
     `;
     assert.ok(chunks.length > 0);
     assert.ok(chunks.every(chunk => chunk.dimensions === 1024));
+    const memoryText = "PostgreSQL recovery requires verified backup checksums before restoring partitions.";
+    const storedMemory = await request("/v1/memory", {
+      project: projectName, content: memoryText, memory_type: "factual", auto_detect: false,
+      write_mode: "sync", scope_target: "PROJECT", confidence: 0.95, importance: 0.9,
+    });
+    assert.equal(storedMemory.success, true);
+    const embeddingPath = "../src/engine/embeddings.js";
+    const normalizationPath = "../src/lib/memory-normalization.js";
+    const { embedSingle } = await import(embeddingPath);
+    const { expandMemorySearchQueries } = await import(normalizationPath);
+    const exactVector = await embedSingle(expandMemorySearchQueries(memoryText).join(" | ") || memoryText);
+    await db.$executeRaw`UPDATE memories SET embedding = ${`[${exactVector.join(",")}]`}::vector WHERE id = ${storedMemory.memory_id}`;
+    const memoryPack = await request("/v1/context/pack", {
+      project: projectName, query: memoryText, include_company_brain: false, token_budget: 300,
+    });
+    assert.ok(memoryPack.context.includes("verified backup"));
+    assert.equal(memoryPack.memories[0].id, storedMemory.memory_id);
+    const cachedMemoryPack = await request("/v1/context/pack", {
+      project: projectName, query: memoryText, include_company_brain: false, token_budget: 300,
+    });
+    assert.equal(cachedMemoryPack.context_hash, memoryPack.context_hash);
+    const isolatedMemoryPack = await request("/v1/context/pack", {
+      project: `${projectName}-isolated`, query: memoryText, include_company_brain: false, token_budget: 300,
+    });
+    assert.equal(isolatedMemoryPack.context, "");
     const pack = await request("/v1/context/pack", {
       project: projectName, query: "How can PostgreSQL be recovered from a backup safely?", include_memory: false, token_budget: 300,
       cwd: "/must/not/be/read", files: ["/must/not/be/read/secret"],

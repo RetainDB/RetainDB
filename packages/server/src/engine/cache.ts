@@ -10,7 +10,7 @@ const memoryCache = new Map<string, { data: any; expiry: number; accessTime: num
 const MAX_CACHE_SIZE = 1000; // Prevent memory exhaustion
 
 // Semantic cache for vector search (stores query embeddings + results)
-const semanticCache = new Map<string, { embedding: number[]; results: any; expiry: number }>();
+const semanticCache = new Map<string, { embedding: number[]; results: any; expiry: number; scope: string }>();
 const MAX_SEMANTIC_CACHE_SIZE = 1000; // Increased from 500
 const SEMANTIC_THRESHOLD = 0.85; // Lowered from 0.92 for higher hit rate
 
@@ -404,6 +404,7 @@ export async function prewarmSemanticCache(params: {
         similarity: 1.0, // Perfect match for itself
       }],
       expiry: Date.now() + DEFAULT_CONFIG.ttl * 1000,
+      scope: "",
     });
     
     cached++;
@@ -467,7 +468,8 @@ function getNeighboringBuckets(embedding: number[]): string[] {
  * OPTIMIZED: Uses bucket index for O(1) lookup instead of O(n) iteration
  */
 export async function getFromSemanticCache(
-  queryEmbedding: number[]
+  queryEmbedding: number[],
+  scope = ""
 ): Promise<{ results: any; similarity: number } | null> {
   if (!DEFAULT_CONFIG.enabled) return null;
   
@@ -488,7 +490,7 @@ export async function getFromSemanticCache(
 
   for (const key of candidateKeySet) {
     const entry = semanticCache.get(key);
-    if (!entry) continue;
+    if (!entry || entry.scope !== scope) continue;
 
     if (entry.expiry < now) {
       semanticCache.delete(key);
@@ -519,18 +521,20 @@ export async function getFromSemanticCache(
 export async function setInSemanticCache(
   queryEmbedding: number[],
   results: any,
-  ttl: number = DEFAULT_CONFIG.ttl
+  ttl: number = DEFAULT_CONFIG.ttl,
+  scope = ""
 ): Promise<void> {
   if (!DEFAULT_CONFIG.enabled) return;
 
   const now = Date.now();
   const bucketKey = getEmbeddingBucket(queryEmbedding);
-  const key = `sem:${crypto.createHash("md5").update(JSON.stringify(queryEmbedding.slice(0, 10))).digest("hex").substring(0, 8)}`;
+  const key = `sem:${crypto.createHash("sha256").update(JSON.stringify([scope, queryEmbedding])).digest("hex")}`;
 
   semanticCache.set(key, {
     embedding: queryEmbedding,
     results,
     expiry: now + ttl * 1000,
+    scope,
   });
   
   // Update bucket index
