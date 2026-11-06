@@ -97,6 +97,8 @@ export function embedNativeCapture(texts: string[], remainingMs = 120_000): Prom
 export async function stopNativeEmbeddingProcess(): Promise<void> {
   const child = worker;
   if (!child) return;
+  child.ref();
+  child.channel?.ref();
   if (pending) pending.failure = new Error("Native embedding process stopped");
   await new Promise<void>(resolve => {
     child.once("close", () => resolve());
