@@ -103,6 +103,13 @@ Server runs on `http://localhost:3000`.
 
 Keep `ENCRYPTION_KEY` stable across restarts so stored agent credentials remain readable. Local BGE embeddings do not require an OpenAI key; the first request downloads the model. Explicit `EMBEDDING_MODE=local` keeps all batches local, including large documents. Set `EMBEDDING_MODE=openai` and `OPENAI_API_KEY` to use OpenAI embeddings instead; hybrid mode switches large batches to OpenAI. LLM extraction and research still require an OpenAI key.
 
+To verify the packaged Prisma client and migration CLI without network access or a running database:
+
+```bash
+docker build -t retaindb-runtime-check -f packages/server/Dockerfile .
+node scripts/check-server-image.mjs retaindb-runtime-check
+```
+
 ### Node + Postgres
 
 ```bash

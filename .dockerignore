@@ -1,0 +1,13 @@
+.git
+.metrics
+target
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-*
+.DS_Store
