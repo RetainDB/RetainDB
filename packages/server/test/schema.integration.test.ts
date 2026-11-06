@@ -4,7 +4,17 @@ import { after, test } from "node:test";
 
 const databaseUrl = process.env.RETAINDB_TEST_DATABASE_URL;
 const run = databaseUrl ? test : test.skip;
-if (databaseUrl) process.env.DATABASE_URL = databaseUrl;
+const environmentKeys = ["DATABASE_URL", "OPENAI_API_KEY", "RETAINDB_API_KEY", "ENCRYPTION_KEY", "EMBEDDING_MODE", "DISABLE_AUTO_EXTRACTION", "LARGE_BATCH_THRESHOLD"] as const;
+const originalEnvironment = Object.fromEntries(environmentKeys.map(key => [key, process.env[key]]));
+if (databaseUrl) {
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.ENCRYPTION_KEY = randomBytes(32).toString("hex");
+  process.env.EMBEDDING_MODE = "local";
+  process.env.DISABLE_AUTO_EXTRACTION = "true";
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.RETAINDB_API_KEY;
+  delete process.env.LARGE_BATCH_THRESHOLD;
+}
 const fixtureId = randomUUID();
 const projectIds: string[] = [];
 
@@ -143,6 +153,34 @@ run("accepts and completes asynchronous ingestion for the default organization",
   }
 });
 
+run("keeps bulk document embeddings local without credentials", {
+  skip: process.env.RETAINDB_TEST_LOCAL_EMBEDDINGS !== "true",
+  timeout: 180_000,
+}, async () => {
+  const { ensureProject } = await import("../src/api/helpers.js");
+  const { db } = await import("../src/db/index.js");
+  const modulePath = "../src/engine/ingest.js";
+  const { ingestDocument } = await import(modulePath);
+  const project = await ensureProject("default", `bulk-local-${fixtureId}`);
+  projectIds.push(project.id);
+  const source = await db.source.create({
+    data: { orgId: "default", projectId: project.id, name: "bulk-documents", type: "text", status: "READY" },
+  });
+  const content = Array.from({ length: 24 }, (_, index) =>
+    `# Recovery section ${index}\nBefore restoring PostgreSQL partition ${index}, verify its backup checksum and stop writes to the database. Keep the verified backup until record counts and semantic retrieval have been checked.`
+  ).join("\n\n");
+  const document = await ingestDocument({
+    sourceId: source.id, projectId: project.id, externalId: "bulk-notes", title: "Partition recovery", content,
+    ingestionProfile: "plain_text", strategyOverride: "fixed", skipEntityExtraction: true,
+  });
+  const chunks = await db.$queryRaw<Array<{ dimensions: number | null }>>`
+    SELECT vector_dims(embedding) AS dimensions FROM chunks WHERE "documentId" = ${document.id}
+  `;
+  assert.ok(document.searchableChunksCreated > 20);
+  assert.equal(chunks.length, document.searchableChunksCreated);
+  assert.ok(chunks.every(chunk => chunk.dimensions === 1024));
+});
+
 run("reads persisted connector job health after production migrations", async () => {
   const { ensureProject } = await import("../src/api/helpers.js");
   const { db } = await import("../src/db/index.js");
@@ -166,7 +204,6 @@ run("reads persisted connector job health after production migrations", async ()
 
 run("loads the self-hosted API without an OpenAI credential", async () => {
   assert.equal(process.env.OPENAI_API_KEY, undefined);
-  process.env.ENCRYPTION_KEY ||= randomBytes(32).toString("hex");
   const appPath = "../src/api/routes.js";
   const { api } = await import(appPath);
   assert.equal(typeof api.fetch, "function");
@@ -258,10 +295,17 @@ run("processes a queued document and persists the actual chunk count", {
 
 after(async () => {
   if (!databaseUrl) return;
-  const { db } = await import("../src/db/index.js");
   try {
-    await db.project.deleteMany({ where: { id: { in: projectIds } } });
+    const { db } = await import("../src/db/index.js");
+    try {
+      await db.project.deleteMany({ where: { id: { in: projectIds } } });
+    } finally {
+      await db.$disconnect();
+    }
   } finally {
-    await db.$disconnect();
+    for (const key of environmentKeys) {
+      if (originalEnvironment[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnvironment[key];
+    }
   }
 });
