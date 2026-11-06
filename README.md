@@ -126,6 +126,11 @@ Postgres must have the `pgvector` extension enabled.
 
 Set a stable `ENCRYPTION_KEY` in `packages/server/.env` before starting the server. Apply the committed migrations with `prisma migrate deploy`; do not replace an existing database with the generated Prisma schema. The migration history also contains legacy tables not managed by the current server client.
 
+Concurrent synchronous text learns reuse one ingestion source per project.
+Source-version allocation is serialized in PostgreSQL for each source, so
+first writes and staged syncs do not race to allocate the same version number.
+Retained version-number gaps are preserved rather than reused.
+
 ### Coding-agent hooks with PostgreSQL
 
 The Server accepts the native Local hooks at `POST /retaindb/observe` and

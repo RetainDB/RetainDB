@@ -225,6 +225,84 @@ run("loads the self-hosted API without an OpenAI credential", async () => {
   assert.ok(Array.isArray((await response.json()).projects));
 });
 
+run("concurrent first text learns share one project source and persist both documents", {
+  skip: process.env.RETAINDB_TEST_LOCAL_EMBEDDINGS !== "true",
+  timeout: 180_000,
+}, async () => {
+  const { ensureProject } = await import("../src/api/helpers.js");
+  const { db } = await import("../src/db/index.js");
+  const appPath = "../src/api/routes.js";
+  const { api } = await import(appPath);
+  const embeddingPath = "../src/engine/embeddings.js";
+  const { embedSingle } = await import(embeddingPath);
+  await embedSingle("Initialize genuine local embeddings before concurrent document ingestion.");
+  const project = await ensureProject("default", `concurrent-learn-${fixtureId}`);
+  projectIds.push(project.id);
+  const barrier = `source_barrier_${fixtureId.replaceAll("-", "")}`;
+  await db.$executeRawUnsafe(`CREATE FUNCTION "${barrier}"() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW."projectId" = '${project.id}' THEN
+        PERFORM pg_advisory_xact_lock(hashtext(NEW."projectId"));
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await db.$executeRawUnsafe(`CREATE TRIGGER "${barrier}" BEFORE INSERT ON sources FOR EACH ROW EXECUTE FUNCTION "${barrier}"()`);
+  try {
+    const learn = (label: string) => api.request("/v1/learn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "text", project: project.id, title: `Concurrent ${label} document`,
+        content: `The ${label} document preserves independent knowledge while sharing its project's ingestion source.`,
+        metadata: { provenance: fixtureId, label },
+        options: { async: false, ingestion_profile: "plain_text", strategy_override: "fixed" },
+      }),
+    });
+    let pending!: Promise<Response[]>;
+    await db.$transaction(async transaction => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${project.id}))`;
+      pending = Promise.all([learn("first"), learn("second")]);
+      const deadline = Date.now() + 10_000;
+      while (true) {
+        const locks = await db.$queryRaw<Array<{ waiting: number }>>`
+          SELECT COUNT(*)::int AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+        `;
+        if (locks[0].waiting === 2) break;
+        assert.ok(Date.now() < deadline, "both first writes must reach source allocation before release");
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }, { timeout: 15_000 });
+    const responses = await pending;
+    const bodies = await Promise.all(responses.map(response => response.json()));
+    assert.deepEqual(responses.map(response => response.status), [200, 200], JSON.stringify(bodies));
+    for (const body of bodies) {
+      assert.equal(body.success, true);
+      assert.equal(body.status, "completed");
+    }
+    assert.equal(bodies[0].source_id, bodies[1].source_id);
+    assert.equal(await db.source.count({ where: { projectId: project.id } }), 1);
+    const versions = await db.sourceVersion.findMany({ where: { sourceId: bodies[0].source_id } });
+    assert.equal(versions.length, 1);
+    assert.equal(versions[0].status, "ACTIVE");
+    const source = await db.source.findUniqueOrThrow({ where: { id: bodies[0].source_id } });
+    assert.equal(source.activeVersionId, versions[0].id);
+    const documents = await db.document.findMany({ where: { projectId: project.id } });
+    assert.equal(documents.length, 2);
+    assert.ok(documents.every(document => document.status === "READY" && document.sourceVersionId === source.activeVersionId));
+    const vectors = await db.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*) AS count FROM chunks c
+      JOIN documents d ON d.id = c."documentId"
+      JOIN sources s ON s.id = d."sourceId"
+      WHERE c."projectId" = ${project.id} AND d."sourceVersionId" = s."activeVersionId"
+        AND vector_dims(c.embedding) = 1024
+    `;
+    assert.equal(Number(vectors[0].count), 2);
+  } finally {
+    await db.$executeRawUnsafe(`DROP TRIGGER "${barrier}" ON sources`);
+    await db.$executeRawUnsafe(`DROP FUNCTION "${barrier}"()`);
+  }
+});
+
 run("runs scheduled operational health against the migrated webhook delivery schema", async () => {
   const { db } = await import("../src/db/index.js");
   const hook = await db.webhook.create({
@@ -244,6 +322,30 @@ run("runs scheduled operational health against the migrated webhook delivery sch
     await db.webhookDelivery.delete({ where: { id: delivery.id } });
     await db.webhook.delete({ where: { id: hook.id } });
   }
+});
+
+run("allocates unique source versions after retention gaps and concurrent staging", async () => {
+  const { ensureProject } = await import("../src/api/helpers.js");
+  const { db } = await import("../src/db/index.js");
+  const modulePath = "../src/engine/source-versions.js";
+  const { ensureActiveSourceVersion, createStagedSourceVersion } = await import(modulePath);
+  const project = await ensureProject("default", `version-allocation-${fixtureId}`);
+  projectIds.push(project.id);
+  const source = await db.source.create({
+    data: { projectId: project.id, orgId: "default", name: "version-allocation", type: "text", status: "READY" },
+  });
+  await db.sourceVersion.createMany({
+    data: [1, 3].map(versionNumber => ({
+      sourceId: source.id, orgId: "default", projectId: project.id, versionNumber, status: "SUPERSEDED",
+    })),
+  });
+  const active = await ensureActiveSourceVersion(source.id);
+  assert.equal(active?.versionNumber, 4);
+  const staged = await Promise.all(Array.from({ length: 4 }, () => createStagedSourceVersion(source.id)));
+  assert.deepEqual(staged.map(version => version.versionNumber).sort((a, b) => a - b), [5, 6, 7, 8]);
+  const current = await db.source.findUniqueOrThrow({ where: { id: source.id } });
+  assert.equal(current.activeVersionId, active?.id);
+  assert.equal(await db.sourceVersion.count({ where: { sourceId: source.id, status: "ACTIVE" } }), 1);
 });
 
 run("reports chunk persistence failures instead of successful ingestion", async () => {

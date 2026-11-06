@@ -622,8 +622,9 @@ function mergeIndexSourceConfig(input: z.infer<typeof indexApiSourceSchema>): Re
 
 async function ensureDirectIngestSource(projectId: string, orgId: string) {
   const directIngestName = `direct-ingest-${projectId}`;
-  let directSource = await prisma.source.findFirst({
+  const findSource = () => prisma.source.findFirst({
     where: {
+      orgId,
       projectId,
       connectorType: "custom",
       OR: [
@@ -632,9 +633,11 @@ async function ensureDirectIngestSource(projectId: string, orgId: string) {
       ],
     },
   });
+  const directSource = await findSource();
+  if (directSource) return directSource;
 
-  if (!directSource) {
-    directSource = await prisma.source.create({
+  try {
+    return await prisma.source.create({
       data: {
         orgId,
         projectId,
@@ -645,9 +648,13 @@ async function ensureDirectIngestSource(projectId: string, orgId: string) {
         status: "READY",
       },
     });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const concurrent = await findSource();
+      if (concurrent) return concurrent;
+    }
+    throw error;
   }
-
-  return directSource;
 }
 
 async function learnTextContent(params: {

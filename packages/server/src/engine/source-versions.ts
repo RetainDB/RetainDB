@@ -9,40 +9,43 @@ const DEFAULT_SUPERSEDED_VERSIONS_TO_KEEP = 3;
 export type ConnectorOutcome = "success" | "partial_failure" | "failed";
 
 export async function ensureActiveSourceVersion(sourceId: string) {
-  const source = await prisma.source.findUnique({
-    where: { id: sourceId },
-    select: {
-      id: true,
-      orgId: true,
-      projectId: true,
-      activeVersionId: true,
-    },
-  });
-  if (!source) throw new Error(`Source ${sourceId} not found`);
-  if (source.activeVersionId) {
-    return prisma.sourceVersion.findUnique({ where: { id: source.activeVersionId } });
-  }
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM sources WHERE id = ${sourceId} FOR UPDATE`;
+    const source = await tx.source.findUnique({
+      where: { id: sourceId },
+      select: {
+        id: true,
+        orgId: true,
+        projectId: true,
+        activeVersionId: true,
+      },
+    });
+    if (!source) throw new Error(`Source ${sourceId} not found`);
+    if (source.activeVersionId) {
+      return tx.sourceVersion.findUnique({ where: { id: source.activeVersionId } });
+    }
 
-  const existingCount = await prisma.sourceVersion.count({ where: { sourceId } });
-  const restoreUntil = computeRestoreUntil(90);
-  const created = await prisma.sourceVersion.create({
-    data: {
-      sourceId,
-      orgId: source.orgId,
-      projectId: source.projectId,
-      versionNumber: existingCount + 1,
-      status: "ACTIVE",
-      promotedAt: new Date(),
-      restoreUntil,
-    },
+    const aggregate = await tx.sourceVersion.aggregate({
+      where: { sourceId },
+      _max: { versionNumber: true },
+    });
+    const created = await tx.sourceVersion.create({
+      data: {
+        sourceId,
+        orgId: source.orgId,
+        projectId: source.projectId,
+        versionNumber: (aggregate._max.versionNumber ?? 0) + 1,
+        status: "ACTIVE",
+        promotedAt: new Date(),
+        restoreUntil: computeRestoreUntil(90),
+      },
+    });
+    await tx.source.update({
+      where: { id: sourceId },
+      data: { activeVersionId: created.id },
+    });
+    return created;
   });
-
-  await prisma.source.update({
-    where: { id: sourceId },
-    data: { activeVersionId: created.id },
-  });
-
-  return created;
 }
 
 export async function resolveSourceVersionForWrite(sourceId: string): Promise<string | null> {
@@ -77,34 +80,29 @@ export async function createStagedSourceVersion(sourceId: string, params?: {
   syncJobId?: string | null;
   traceId?: string | null;
 }) {
-  const source = await prisma.source.findUnique({
-    where: { id: sourceId },
-    select: {
-      id: true,
-      orgId: true,
-      projectId: true,
-    },
-  });
-  if (!source) throw new Error(`Source ${sourceId} not found`);
-
-  const aggregate = await prisma.sourceVersion.aggregate({
-    where: { sourceId },
-    _max: { versionNumber: true },
-  });
-  const versionNumber = (aggregate._max.versionNumber || 0) + 1;
-  const restoreUntil = computeRestoreUntil(90);
-
-  return prisma.sourceVersion.create({
-    data: {
-      sourceId,
-      orgId: source.orgId,
-      projectId: source.projectId,
-      versionNumber,
-      status: "STAGED",
-      syncJobId: params?.syncJobId || null,
-      restoreUntil,
-      errorMessage: params?.traceId ? `trace:${params.traceId}` : null,
-    },
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM sources WHERE id = ${sourceId} FOR UPDATE`;
+    const source = await tx.source.findUnique({
+      where: { id: sourceId },
+      select: { id: true, orgId: true, projectId: true },
+    });
+    if (!source) throw new Error(`Source ${sourceId} not found`);
+    const aggregate = await tx.sourceVersion.aggregate({
+      where: { sourceId },
+      _max: { versionNumber: true },
+    });
+    return tx.sourceVersion.create({
+      data: {
+        sourceId,
+        orgId: source.orgId,
+        projectId: source.projectId,
+        versionNumber: (aggregate._max.versionNumber ?? 0) + 1,
+        status: "STAGED",
+        syncJobId: params?.syncJobId || null,
+        restoreUntil: computeRestoreUntil(90),
+        errorMessage: params?.traceId ? `trace:${params.traceId}` : null,
+      },
+    });
   });
 }
 
