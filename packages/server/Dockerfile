@@ -20,15 +20,17 @@ RUN pnpm --filter @retaindb/server exec prisma generate
 FROM node:20-slim AS runner
 # openssl for Prisma, libstdc++/libgomp for onnxruntime native bindings
 RUN apt-get update && apt-get install -y openssl libstdc++6 libgomp1 && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
+WORKDIR /app/packages/server
 
+COPY --from=builder /app/node_modules /app/node_modules
+COPY --from=builder /app/packages/server/node_modules ./node_modules
+COPY --from=builder /app/packages/server/package.json ./package.json
 COPY --from=builder /app/packages/server/dist ./dist
 COPY --from=builder /app/packages/server/prisma ./prisma
-COPY --from=builder /app/node_modules ./node_modules
 
 ENV NODE_ENV=production
 ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=./prisma/schema.prisma && node dist/index.js"]
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy --schema=./prisma/schema.prisma && exec node dist/index.js"]
