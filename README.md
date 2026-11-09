@@ -143,8 +143,10 @@ PostgreSQL. It is not a claim that embeddings are ready. The Server indexes
 accepted events in the background with the configured embedding provider;
 pending events resume after restart. Repeating the same event payload reuses
 its receipt. `GET /v1/agent-events/:eventId` reports `pending`, `processing`
-or `indexed`, including retry diagnostics when embedding fails. Credentials
-are redacted before captured data is persisted.
+or `indexed`, including retry diagnostics when embedding fails. Recognized
+credentials, connection-URL user information and complete private-key blocks
+are redacted before captured data is persisted. Redaction is not a substitute
+for keeping unrelated secrets out of captured tool output.
 
 Native capture embeddings run in a reusable child process with a bounded
 attempt deadline (120 seconds by default; `NATIVE_CAPTURE_EMBEDDING_TIMEOUT_MS`

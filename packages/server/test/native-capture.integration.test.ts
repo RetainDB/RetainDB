@@ -32,10 +32,15 @@ async function request(path: string, body?: unknown) {
 run("native hook events persist, replay once, recover pending work and retrieve real local vectors", async () => {
   const { db } = await import("../src/db/index.js");
   const { drainNativeCaptures } = await import(capturePath);
+  const credentialEchoes = ["fixture-embedded-token", "12345678", "87654321"];
   const payload = {
     project: projectName, sessionId: "shared-external-session", hookType: "user_prompt_submit", agent_id: "native-fixture-agent",
     timestamp: "2026-11-06T12:00:00.000Z",
-    data: { prompt: "PostgreSQL recovery must verify backup checksums before restoring database partitions.", api_key: "fixture-sensitive-value", env: { RETAINDB_API_KEY: "fixture-env-sensitive-value" }, details: 'password="fixture quoted secret phrase"' },
+    data: { prompt: "PostgreSQL recovery must verify backup checksums before restoring database partitions.", api_key: "fixture-sensitive-value", env: { RETAINDB_API_KEY: "fixture-env-sensitive-value" }, details: 'password="fixture quoted secret phrase"',
+      connection: "postgres://fixture-user:fixture-connection-secret@localhost:5432/memory",
+      key_file: "-----BEGIN PRIVATE KEY-----\nfixture-private-material\n-----END PRIVATE KEY-----",
+      authorization: ["Bearer", credentialEchoes[0]].join(" "), tool_input: `PASSWORD=${credentialEchoes[1]}`, password: Number(credentialEchoes[2]),
+      tool_response: `fixture-env-sensitive-value fixture-connection-secret fixture-private-material ${credentialEchoes.join(" ")}` },
   };
   const responses = await Promise.all(Array.from({ length: 4 }, () => request("/retaindb/observe", payload)));
   assert.ok(responses.every(result => result.accepted && result.event_id === responses[0].event_id));
@@ -48,6 +53,9 @@ run("native hook events persist, replay once, recover pending work and retrieve 
   assert.ok(!JSON.stringify(message).includes("fixture-sensitive-value"));
   assert.ok(!JSON.stringify(message).includes("fixture-env-sensitive-value"));
   assert.ok(!JSON.stringify(message).includes("secret phrase"));
+  assert.ok(!JSON.stringify(message).includes("fixture-connection-secret"));
+  assert.ok(!JSON.stringify(message).includes("fixture-private-material"));
+  for (const credential of credentialEchoes) assert.ok(!JSON.stringify(message).includes(credential));
   assert.ok(message.content.includes("[REDACTED]"));
   assert.equal(message.createdAt.toISOString(), payload.timestamp);
 
@@ -65,6 +73,14 @@ run("native hook events persist, replay once, recover pending work and retrieve 
     `;
     assert.ok(chunks.length > 0);
     assert.ok(chunks.every(chunk => chunk.dimensions === 1024));
+    const indexed = await db.document.findUniqueOrThrow({ where: { id: status.document_id } });
+    const indexedChunks = await db.chunk.findMany({ where: { documentId: indexed.id } });
+    for (const stored of [indexed, ...indexedChunks]) {
+      assert.ok(!JSON.stringify(stored).includes("fixture-env-sensitive-value"));
+      assert.ok(!JSON.stringify(stored).includes("fixture-connection-secret"));
+      assert.ok(!JSON.stringify(stored).includes("fixture-private-material"));
+      for (const credential of credentialEchoes) assert.ok(!JSON.stringify(stored).includes(credential));
+    }
     const memoryText = "PostgreSQL recovery requires verified backup checksums before restoring partitions.";
     const storedMemory = await request("/v1/memory", {
       project: projectName, content: memoryText, memory_type: "factual", auto_detect: false,
