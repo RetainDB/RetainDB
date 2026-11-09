@@ -532,15 +532,19 @@ function attachParentChunks(
   return all.map((chunk, index) => ({ ...chunk, chunkIndex: index }));
 }
 
+function codePointBoundaryAtOrAfter(content: string, offset: number): number {
+  return (content.codePointAt(offset - 1) ?? 0) > 0xffff ? offset + 1 : offset;
+}
+
 function splitFixed(content: string, chunkSize: number, chunkOverlap: number): string[] {
   const chunks: string[] = [];
   let start = 0;
   const overlap = Math.min(chunkOverlap, Math.floor(chunkSize / 3));
   while (start < content.length) {
-    const end = Math.min(content.length, start + chunkSize);
+    const end = codePointBoundaryAtOrAfter(content, Math.min(content.length, start + chunkSize));
     chunks.push(content.slice(start, end));
     if (end >= content.length) break;
-    start = Math.max(0, end - overlap);
+    start = codePointBoundaryAtOrAfter(content, Math.max(0, end - overlap));
   }
   return chunks;
 }

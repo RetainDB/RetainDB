@@ -225,6 +225,47 @@ run("loads the self-hosted API without an OpenAI credential", async () => {
   assert.ok(Array.isArray((await response.json()).projects));
 });
 
+run("text learns persist Unicode across fixed chunk boundaries without changing source content", {
+  skip: process.env.RETAINDB_TEST_LOCAL_EMBEDDINGS !== "true",
+  timeout: 180_000,
+}, async () => {
+  const { ensureProject } = await import("../src/api/helpers.js");
+  const { db } = await import("../src/db/index.js");
+  const appPath = "../src/api/routes.js";
+  const { api } = await import(appPath);
+  const project = await ensureProject("default", `unicode-learn-${fixtureId}`);
+  projectIds.push(project.id);
+  const content = "a".repeat(499) + "🧬" + "b".repeat(198) + "𐐀" + "c".repeat(900);
+  const response = await api.request("/v1/learn", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: "text",
+      project: project.id,
+      title: "Unicode boundary persistence",
+      content,
+      metadata: { unicode_fixture: fixtureId },
+      options: { async: false, ingestion_profile: "plain_text", strategy_override: "fixed" },
+    }),
+  });
+  assert.equal(response.status, 200, await response.text());
+  const document = await db.document.findFirstOrThrow({ where: { projectId: project.id } });
+  assert.equal(document.content, content);
+  assert.equal(document.status, "READY");
+  const chunks = await db.$queryRaw<Array<{ content: string; dimensions: number | null }>>`
+    SELECT content, vector_dims(embedding) AS dimensions FROM chunks
+    WHERE "documentId" = ${document.id} ORDER BY "chunkIndex"
+  `;
+  assert.ok(chunks.length > 1);
+  for (const chunk of chunks) {
+    assert.doesNotMatch(chunk.content, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+    assert.ok(content.includes(chunk.content));
+    assert.equal(chunk.dimensions, 1024);
+  }
+  assert.ok(chunks.some(chunk => chunk.content.includes("🧬")));
+  assert.ok(chunks.some(chunk => chunk.content.includes("𐐀")));
+});
+
 run("concurrent first text learns share one project source and persist both documents", {
   skip: process.env.RETAINDB_TEST_LOCAL_EMBEDDINGS !== "true",
   timeout: 180_000,
