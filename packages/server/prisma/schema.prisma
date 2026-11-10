@@ -46,6 +46,21 @@ enum SourceStatus {
   INDEXING
   ERROR
   DISABLED
+  CONNECTING
+}
+
+enum SyncMode {
+  MANUAL
+  SCHEDULED
+  REALTIME
+}
+
+enum SourceVersionStatus {
+  STAGED
+  PROMOTING
+  ACTIVE
+  SUPERSEDED
+  FAILED
 }
 
 model Source {
@@ -59,11 +74,10 @@ model Source {
   status          SourceStatus @default(PENDING)
   activeVersionId String?
   lastSyncAt      DateTime?
-  lastSyncAt2     DateTime?    @map("last_sync_at2")
   lastSyncError   String?
   syncError       String?
   syncSchedule    String?
-  syncMode        String?
+  syncMode        SyncMode     @default(MANUAL)
   lastSyncStatus  String?
   deletedAt         DateTime?
   documentCount     Int        @default(0)
@@ -77,6 +91,7 @@ model Source {
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   documents Document[]
   versions  SourceVersion[]
+  syncJobs  SyncJob[]
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -87,10 +102,10 @@ model Source {
 model SourceVersion {
   id            String   @id @default(uuid())
   sourceId      String
-  orgId         String?
+  orgId         String
   projectId     String?
   versionNumber Int
-  status        String   @default("STAGED") // STAGED | ACTIVE | SUPERSEDED
+  status        SourceVersionStatus @default(STAGED)
   documentCount Int      @default(0)
   chunkCount    Int      @default(0)
   partialFailure Boolean  @default(false)
@@ -119,6 +134,7 @@ enum DocumentStatus {
   INDEXED
   READY
   ERROR
+  EXCLUDED
 }
 
 model Document {
@@ -417,21 +433,28 @@ model SharedContext {
 
 model SyncJob {
   id              String    @id @default(uuid())
-  sourceId        String?
+  sourceId        String
   sourceVersionId String?
   type            String    @default("INCREMENTAL")
   status          String    @default("PENDING")
-  progress        Int       @default(0)
+  progress        Float     @default(0)
   traceId         String?
   parentTraceId   String?
-  error           String?
   errorMessage    String?
   errorCode       String?
   startedAt       DateTime?
-  finishedAt      DateTime?
   completedAt     DateTime?
+  documentsTotal  Int       @default(0)
+  documentsIndexed Int      @default(0)
+  documentsFailed Int       @default(0)
+  bytesProcessed  BigInt    @default(0)
+  retryCount      Int       @default(0)
+  logs            Json      @default("[]")
+  partialFailure  Boolean   @default(false)
+  warningCodes    String[]  @default([])
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@index([sourceId])
   @@index([status])
@@ -657,7 +680,7 @@ model AgentResearchSession {
 
 model Webhook {
   id              String   @id @default(uuid())
-  projectId       String?
+  sourceId        String?
   orgId           String   @default("default")
   url             String
   events          String[] @default([])
@@ -667,14 +690,13 @@ model Webhook {
   lastDeliveredAt DateTime?
   lastStatusCode  Int?
   failureCount    Int      @default(0)
-  lastError       String?
+  status          String   @default("ACTIVE")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   deliveries WebhookDelivery[]
 
   @@index([orgId])
-  @@index([projectId])
   @@map("webhooks")
 }
 
@@ -683,20 +705,38 @@ model WebhookDelivery {
   webhookId   String
   event       String
   eventId     String?
-  action      String?
+  action      String   @default("deliver")
   attempt     Int      @default(1)
   durationMs  Int?
   payload     Json     @default("{}")
   statusCode  Int?
-  success     Boolean  @default(false)
-  error       String?
+  responseBody String?
+  errorMessage String?
+  errorCode    String?
   traceId     String?
-  deliveredAt DateTime?
-  attemptedAt DateTime @default(now())
-  createdAt   DateTime @default(now())
+  parentTraceId String?
+  deliveredAt DateTime? @default(now())
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
   @@index([webhookId])
   @@map("webhook_deliveries")
+}
+
+model Package {
+  id            String    @id @default(uuid())
+  orgId         String    @default("default")
+  projectId     String?
+  ecosystem     String
+  name          String
+  version       String    @default("")
+  registryUrl   String?
+  autoSync      Boolean   @default(false)
+  lastIndexedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([orgId, ecosystem, name])
+  @@index([orgId])
+  @@map("packages")
 }
