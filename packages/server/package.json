@@ -8,8 +8,9 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup src/index.ts --format esm --out-dir dist --dts",
+    "build": "tsup src/index.ts src/engine/workers/native-embedding-process.ts --format esm --out-dir dist --dts",
     "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit -p test/tsconfig.json && tsx --test test/*.test.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
