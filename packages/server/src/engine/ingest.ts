@@ -153,7 +153,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
   try {
     await prisma.chunk.deleteMany({ where: { documentId: doc.id } });
 
-    const embeddings = await embedSearchableChunks(chunking.chunks, input.embedTexts, Boolean(input.embedTexts));
+    const embeddings = await embedSearchableChunks(chunking.chunks, input.embedTexts);
     const embeddedByTempId = new Map(embeddings.map((entry) => [entry.tempId, entry.vector]));
     const chunkInsertErrors: unknown[] = [];
 
@@ -268,27 +268,19 @@ export async function ingestDocument(input: IngestDocumentInput) {
   };
 }
 
-async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunks"], embedTexts = embed, required = false): Promise<EmbeddedChunk[]> {
+async function embedSearchableChunks(chunks: ReturnType<typeof chunkText>["chunks"], embedTexts = embed): Promise<EmbeddedChunk[]> {
   const searchable = chunks.filter((chunk) => chunk.searchable);
   const embedded: EmbeddedChunk[] = [];
 
   for (let i = 0; i < searchable.length; i += EMBED_BATCH_SIZE) {
     const batch = searchable.slice(i, i + EMBED_BATCH_SIZE);
-    let vectors: number[][] = [];
-    try {
-      vectors = await embedTexts(batch.map((chunk) => chunk.content));
-    } catch (error: any) {
-      if (required) throw error;
-      console.error(`[Ingest] Embedding batch failed — skipping ${batch.length} chunks (no semantic search for these):`, error?.message || error);
-      // Don't push chunks with undefined vectors; they'd be stored but never semantically searchable
-      continue;
-    }
+    // A chunk without a vector is invisible to semantic search, so an embedding
+    // failure fails the batch instead of quietly deleting recall.
+    const vectors = await embedTexts(batch.map((chunk) => chunk.content));
 
     for (let j = 0; j < batch.length; j++) {
       if (!vectors[j]) {
-        if (required) throw new Error("Missing required document embedding");
-        console.warn(`[Ingest] Missing vector for chunk ${batch[j].tempId} — skipping`);
-        continue;
+        throw new Error(`Missing embedding for chunk ${batch[j].tempId}`);
       }
       embedded.push({
         tempId: batch[j].tempId,
