@@ -344,6 +344,62 @@ run("concurrent first text learns share one project source and persist both docu
   }
 });
 
+run("source listing and status preserve version outcomes and restore deadlines", async () => {
+  const { ensureProject } = await import("../src/api/helpers.js");
+  const { db } = await import("../src/db/index.js");
+  const routesPath = "../src/api/routes.js";
+  const { api } = await import(routesPath);
+  const project = await ensureProject("default", `source-status-${fixtureId}`);
+  projectIds.push(project.id);
+  const restoreUntil = new Date("2030-01-02T03:04:05.000Z");
+  const source = await db.source.create({
+    data: {
+      projectId: project.id, orgId: "default", name: `source-status-${fixtureId}`, type: "text", status: "READY", restoreUntil,
+    },
+  });
+  await db.sourceVersion.create({
+    data: {
+      sourceId: source.id, orgId: "default", projectId: project.id, versionNumber: 1,
+      status: "SUPERSEDED", documentCount: 1, createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    },
+  });
+  const version = await db.sourceVersion.create({
+    data: {
+      sourceId: source.id, orgId: "default", projectId: project.id, versionNumber: 2,
+      status: "ACTIVE", documentCount: 3, chunkCount: 7, partialFailure: true,
+      warningCodes: ["TRUNCATED_SOURCE"], errorCode: "PARTIAL_FAILURE",
+    },
+  });
+  await db.source.update({ where: { id: source.id }, data: { activeVersionId: version.id } });
+
+  for (const path of [`/v1/sources?project=${project.id}`, `/v1/projects/${project.id}/sources`]) {
+    const response = await api.request(path);
+    assert.equal(response.status, 200, await response.clone().text());
+    const body = await response.json();
+    assert.equal(body.sources.length, 1);
+    assert.equal(body.sources[0].id, source.id);
+    assert.equal(body.sources[0].active_version, version.id);
+    assert.equal(body.sources[0].partial_failure, true);
+    assert.equal(body.sources[0].documents_total, 3);
+    assert.deepEqual(body.sources[0].warning_codes, ["TRUNCATED_SOURCE"]);
+    assert.equal(body.sources[0].error_code, "PARTIAL_FAILURE");
+    assert.equal(body.sources[0].restore_until, restoreUntil.toISOString());
+  }
+  const response = await api.request(`/v1/sources/${source.id}/status`);
+  assert.equal(response.status, 200, await response.clone().text());
+  const status = await response.json();
+  assert.equal(status.source_id, source.id);
+  assert.equal(status.partial_failure, true);
+  assert.equal(status.documents_total, 3);
+  assert.equal(status.documents_indexed, 3);
+  assert.deepEqual(status.warning_codes, ["TRUNCATED_SOURCE"]);
+  assert.equal(status.error_code, "PARTIAL_FAILURE");
+  assert.equal(status.outcome, "partial_failure");
+  assert.equal(status.active_version, version.id);
+  assert.equal(status.latest_version.id, version.id);
+  assert.equal(status.restore_until, restoreUntil.toISOString());
+});
+
 run("runs scheduled operational health against the migrated webhook delivery schema", async () => {
   const { db } = await import("../src/db/index.js");
   const hook = await db.webhook.create({
