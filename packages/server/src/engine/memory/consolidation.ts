@@ -190,7 +190,6 @@ Return JSON:
       sessionId: cluster.representative.sessionId,
       memoryType: cluster.representative.memoryType,
       content: result.merged_content,
-      embedding,
       entityMentions: result.entity_mentions || [],
       confidence: result.confidence || cluster.representative.confidence,
       documentDate: cluster.representative.documentDate,
@@ -204,6 +203,11 @@ Return JSON:
       },
     },
   });
+
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.$executeRaw`
+    UPDATE memories SET embedding = ${embeddingLiteral}::vector WHERE id = ${mergedMemory.id}
+  `;
 
   // Deactivate old memories
   for (const memory of memories) {

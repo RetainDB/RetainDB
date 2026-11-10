@@ -98,7 +98,7 @@ class IngestionQueue {
         total_documents, processed_documents, total_chunks, processed_chunks,
         webhook_url, metadata, created_at, updated_at
       ) VALUES (
-        ${jobId}::uuid, ${params.orgId}::uuid, ${params.projectId}::uuid, ${params.userId}, 'PENDING',
+        ${jobId}, ${params.orgId}, ${params.projectId}, ${params.userId}, 'PENDING',
         ${totalItems}, 0, 0, 0,
         ${params.webhookUrl || null}, ${JSON.stringify({
           chunkSize: params.chunkSize || 1000,
@@ -212,7 +212,7 @@ class IngestionQueue {
           INSERT INTO ingestion_documents (
             id, job_id, project_id, title, content, url, metadata, status, created_at, updated_at
           ) VALUES (
-            ${item.id}::uuid, ${item.jobId}::uuid, ${item.projectId}::uuid, ${item.title}, ${item.content},
+            ${item.id}, ${item.jobId}, ${item.projectId}, ${item.title}, ${item.content},
             ${item.url}, ${JSON.stringify(item.metadata)}::jsonb, ${item.status}, NOW(), NOW()
           )
         `;
@@ -237,7 +237,7 @@ class IngestionQueue {
     try {
       // Get job details
       const jobRows = await prisma.$queryRaw<any[]>`
-        SELECT * FROM ingestion_jobs WHERE id = ${jobId}::uuid
+        SELECT * FROM ingestion_jobs WHERE id = ${jobId}
       `;
 
       if (jobRows.length === 0) {
@@ -249,7 +249,7 @@ class IngestionQueue {
       // Get pending documents
       const documents = await prisma.$queryRaw<any[]>`
         SELECT * FROM ingestion_documents
-        WHERE job_id = ${jobId}::uuid AND status = 'PENDING'
+        WHERE job_id = ${jobId} AND status = 'PENDING'
         ORDER BY created_at ASC
       `;
 
@@ -299,6 +299,13 @@ class IngestionQueue {
           progress: (progress / job.total_documents) * 100,
           timestamp: new Date().toISOString(),
         });
+      }
+
+      const failures = await prisma.$queryRaw<Array<{ count: bigint | string }>>`
+        SELECT COUNT(*) AS count FROM ingestion_documents WHERE job_id = ${jobId} AND status = 'FAILED'
+      `;
+      if (Number(failures[0]?.count || 0) > 0) {
+        throw new Error("One or more ingestion documents failed");
       }
 
       // Get final chunk count

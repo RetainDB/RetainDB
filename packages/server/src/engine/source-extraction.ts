@@ -11,11 +11,9 @@
  *   await generateSourceProfile(sourceId, projectId, { sourceType: "web", rootUrl });
  */
 
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai-client.js";
 import { prisma } from "../db/index.js"; // used for document queries
 import { ingestDocument } from "./ingest.js";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface SourceProfileOptions {
   sourceType: string;
@@ -214,7 +212,7 @@ Respond with JSON only:
 }`;
     }
 
-    const res = await openai.chat.completions.create({
+    const res = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0,

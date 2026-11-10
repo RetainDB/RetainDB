@@ -8,6 +8,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import OpenAI from "openai";
+import { getOpenAIClient } from "../engine/openai-client.js";
 import { prisma } from "../db/index.js";
 import { retrieve } from "../engine/retriever.js";
 import { buildDocumentTree } from "../engine/oracle.js";
@@ -15,8 +16,6 @@ import { getUserMemory, updateUserMemory, rememberFact, saveResearchSession, get
 import { browseWeb, deepResearch } from "../engine/browser-agent.js";
 import type { AuthContext } from "../middleware/auth.js";
 import { resolveProjectReference, getEffectiveOrgId } from "./helpers.js";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
 
 type Variables = { auth: AuthContext };
 
@@ -587,7 +586,7 @@ At the end of your answer, add a ## References section listing each [^1], [^2]..
             message: stepCount === 1 ? "Analyzing your question and planning web research..." : "Continuing research...",
           });
 
-          const completion = await openai.chat.completions.create({
+          const completion = await getOpenAIClient().chat.completions.create({
             model: body.model,
             messages,
             tools: AGENT_TOOLS,
@@ -672,7 +671,7 @@ At the end of your answer, add a ## References section listing each [^1], [^2]..
         if (stepCount >= maxSteps) {
           await send("thinking", { step: stepCount, message: "Synthesizing findings..." });
 
-          const finalCompletion = await openai.chat.completions.create({
+          const finalCompletion = await getOpenAIClient().chat.completions.create({
             model: body.model,
             messages: [
               ...messages,
@@ -1023,7 +1022,7 @@ Research each competitor's website, pricing page, and feature docs. Be specific 
           // Force tool use for the first 4 steps
           const forceTools = toolCallsMade < 4;
 
-          const completion = await openai.chat.completions.create({
+          const completion = await getOpenAIClient().chat.completions.create({
             model: body.model,
             messages,
             tools: BROWSE_TOOLS,

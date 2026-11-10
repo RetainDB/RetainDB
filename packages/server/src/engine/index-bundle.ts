@@ -233,7 +233,7 @@ export async function exportIndexBundle(params: {
       ...c,
       content:
         typeof c.content === "string"
-          ? (redactSecrets ? redactSecretsDeep(c.content) : c.content).slice(0, limits.maxChunkChars)
+          ? String(redactSecrets ? redactSecretsDeep(c.content) : c.content).slice(0, limits.maxChunkChars)
           : c.content,
     }));
   }

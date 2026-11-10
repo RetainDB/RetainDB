@@ -241,7 +241,10 @@ export async function searchMemories(
 
   // Step 0a: Check simple cache first (before embedding!)
   const step0Start = Date.now();
-  const cacheKey = `search:${projectId}:${userId || ""}:${sessionId || ""}:${agentId || ""}:${taskId || ""}:${applicableScopes.join(",")}:${query}:${topK}`;
+  const cacheScope = JSON.stringify({ orgId, projectId, userId, sessionId, agentId, taskId,
+    scopes: applicableScopes, includeInactive, memoryTypes: effectiveMemoryTypes, namespace, tags,
+    temporalFilter: params.temporalFilter, questionDate: questionDate.toISOString().slice(0, 10), topK, fastMode });
+  const cacheKey = `search:${projectId}:${userId || ""}:${cacheScope}:${query}`;
   const simpleCached = await getFromCache<MemorySearchResult[]>(cacheKey);
   timings.push({ step: "simple_cache", duration: Date.now() - step0Start });
   
@@ -261,7 +264,7 @@ export async function searchMemories(
   timings.push({ step: "embedding", duration: Date.now() - embedStart });
 
   const semanticCacheStart = Date.now();
-  const cached = await getFromSemanticCache(queryEmbedding);
+  const cached = await getFromSemanticCache(queryEmbedding, cacheScope);
   timings.push({ step: "semantic_cache_check", duration: Date.now() - semanticCacheStart });
 
   if (cached && cached.similarity >= SEMANTIC_CACHE_THRESHOLD) {
@@ -321,10 +324,10 @@ export async function searchMemories(
   // Step 3: Early exit if top result is excellent
   if (!queryIntent.wantsRecent && scopedSemanticResults.length > 0 && scopedSemanticResults[0].similarity >= EARLY_EXIT_SIMILARITY) {
     console.log(`⚡ Early exit at ${scopedSemanticResults[0].similarity.toFixed(3)}`);
-    const topMemories = scopedSemanticResults.slice(0, topK);
+    const topMemories = scopedSemanticResults.slice(0, topK).map(toMemorySearchResult);
     
     // Cache good results
-    await setInSemanticCache(queryEmbedding, topMemories, 300);
+    await setInSemanticCache(queryEmbedding, topMemories, 300, cacheScope);
     await setInCache(cacheKey, topMemories, 300); // 5 min cache
     
     const total = Date.now() - startTotal;
@@ -390,29 +393,7 @@ export async function searchMemories(
 
   if (effectiveFastMode || shouldSkipChunkInjection) {
     // Fast mode: skip chunk injection, return memories directly
-    results = finalResults.map((m) => ({
-      memory: {
-        id: m.id,
-        content: m.content,
-        memoryType: m.memoryType,
-        entityMentions: m.entityMentions || [],
-        confidence: m.confidence,
-        version: m.version,
-        scope: m.scope,
-        scopeTarget: m.scope,
-        userId: m.userId ?? null,
-        sessionId: m.sessionId ?? null,
-        agentId: m.agentId ?? null,
-        taskId: m.taskId ?? null,
-        temporal: {
-          documentDate: m.documentDate,
-          eventDate: m.eventDate,
-          validFrom: m.validFrom,
-          validUntil: m.validUntil,
-        },
-      },
-      similarity: m.similarity,
-    }));
+    results = finalResults.map(toMemorySearchResult);
     timings.push({ step: "chunk_injection", duration: 0 });
   } else {
     const chunkStart = Date.now();
@@ -422,7 +403,7 @@ export async function searchMemories(
 
   // Cache results for similar queries
   const cacheWriteStart = Date.now();
-  await setInSemanticCache(queryEmbedding, results, 300);
+  await setInSemanticCache(queryEmbedding, results, 300, cacheScope);
   await setInCache(cacheKey, results, 300); // 5 min cache
   timings.push({ step: "cache_write", duration: Date.now() - cacheWriteStart });
 
@@ -435,6 +416,39 @@ export async function searchMemories(
   emitDiagnostics(params, timings, total, cacheHitType, effectiveFastMode);
 
   return results;
+}
+
+type SearchMemory = Omit<MemorySearchResult["memory"], "temporal" | "metadata"> &
+  MemorySearchResult["memory"]["temporal"] & {
+    metadata?: unknown;
+    similarity: number;
+    sourceChunkId?: string | null;
+    isRelated?: boolean;
+  };
+
+function copyMetadata(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? { ...metadata }
+    : {};
+}
+
+function isMemoryScopeTarget(scope: string | undefined): scope is MemoryScopeTarget {
+  return scope === "USER" || scope === "SESSION" || scope === "PROJECT" || scope === "AGENT"
+    || scope === "TASK" || scope === "DOCUMENT" || scope === "DROPPED";
+}
+
+export function toMemorySearchResult(memory: SearchMemory): MemorySearchResult {
+  return {
+    memory: {
+      id: memory.id, content: memory.content, memoryType: memory.memoryType,
+      entityMentions: memory.entityMentions || [], confidence: memory.confidence, version: memory.version,
+      scope: memory.scope, scopeTarget: memory.scopeTarget ?? (isMemoryScopeTarget(memory.scope) ? memory.scope : undefined),
+      userId: memory.userId ?? null, sessionId: memory.sessionId ?? null, agentId: memory.agentId ?? null, taskId: memory.taskId ?? null,
+      metadata: copyMetadata(memory.metadata),
+      temporal: { documentDate: memory.documentDate, eventDate: memory.eventDate, validFrom: memory.validFrom, validUntil: memory.validUntil },
+    },
+    similarity: memory.similarity,
+  };
 }
 
 /**
@@ -508,7 +522,9 @@ async function vectorSearchMemories(params: {
   const embeddingLiteral = Prisma.raw(`'[${embedding.join(",")}]'::vector`);
   const limitLiteral = Prisma.raw(String(Math.min(Math.max(1, Math.floor(limit)), 1000)));
 
-  const results = await db.$queryRaw(Prisma.sql`
+  const [, results] = await db.$transaction([
+    db.$executeRaw`SET LOCAL hnsw.iterative_scan = strict_order`,
+    db.$queryRaw(Prisma.sql`
     SELECT
       id,
       content,
@@ -517,6 +533,7 @@ async function vectorSearchMemories(params: {
       confidence,
       version,
       scope,
+      "scopeTarget" as "scopeTarget",
       "userId" as "userId",
       "sessionId" as "sessionId",
       "agentId" as "agentId",
@@ -534,7 +551,8 @@ async function vectorSearchMemories(params: {
     WHERE ${whereClause}
     ORDER BY embedding <=> ${embeddingLiteral}
     LIMIT ${limitLiteral}
-  `);
+    `),
+  ]);
 
   return (results as any[]).map((r) => ({
     ...r,
@@ -676,37 +694,15 @@ async function enrichWithRelations(
  * Provides full context for LLM
  */
 async function injectSourceChunks(
-  memories: any[]
+  memories: SearchMemory[]
 ): Promise<MemorySearchResult[]> {
   const chunkIds = memories
     .map((m) => m.sourceChunkId)
-    .filter((id): id is string => id !== null);
+    .filter((id): id is string => typeof id === "string");
 
   if (chunkIds.length === 0) {
     // Return memories without chunks
-    return memories.map((m) => ({
-      memory: {
-        id: m.id,
-        content: m.content,
-        memoryType: m.memoryType,
-        entityMentions: m.entityMentions || [],
-        confidence: m.confidence,
-        version: m.version,
-        scope: m.scope,
-        scopeTarget: m.scope,
-        userId: m.userId ?? null,
-        sessionId: m.sessionId ?? null,
-        agentId: m.agentId ?? null,
-        taskId: m.taskId ?? null,
-        temporal: {
-          documentDate: m.documentDate,
-          eventDate: m.eventDate,
-          validFrom: m.validFrom,
-          validUntil: m.validUntil,
-        },
-      },
-      similarity: m.similarity,
-    }));
+    return memories.map(toMemorySearchResult);
   }
 
   // Fetch chunks
@@ -725,35 +721,15 @@ async function injectSourceChunks(
 
   // Map memories to results with chunks
   return memories.map((m) => ({
-    memory: {
-      id: m.id,
-      content: m.content,
-      memoryType: m.memoryType,
-      entityMentions: m.entityMentions || [],
-      confidence: m.confidence,
-      version: m.version,
-      scope: m.scope,
-      scopeTarget: m.scope,
-      userId: m.userId ?? null,
-      sessionId: m.sessionId ?? null,
-      agentId: m.agentId ?? null,
-      taskId: m.taskId ?? null,
-      temporal: {
-        documentDate: m.documentDate,
-        eventDate: m.eventDate,
-        validFrom: m.validFrom,
-        validUntil: m.validUntil,
-      },
-    },
+    ...toMemorySearchResult(m),
     chunk: m.sourceChunkId && chunkMap.has(m.sourceChunkId)
       ? {
           id: chunkMap.get(m.sourceChunkId)!.id,
           content: chunkMap.get(m.sourceChunkId)!.content,
-          metadata: (chunkMap.get(m.sourceChunkId)!.metadata ?? {}) as Record<string, any>,
+          metadata: copyMetadata(chunkMap.get(m.sourceChunkId)!.metadata),
         }
       : undefined,
-    similarity: m.similarity,
-    relations: m.isRelated ? ([] as MemorySearchResult["relations"]) : undefined,
+    relations: m.isRelated ? [] : undefined,
   }));
 }
 

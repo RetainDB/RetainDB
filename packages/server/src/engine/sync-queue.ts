@@ -729,7 +729,7 @@ setInterval(() => {
       lastDbProgressWrite.delete(jobId);
     }
   }
-}, 60_000);
+}, 60_000).unref();
 
 /**
  * Called once at server startup to recover from crashes/restarts.

@@ -25,7 +25,7 @@ const USE_LOCAL_EMBEDDINGS = EMBEDDING_MODE === 'local' || EMBEDDING_MODE === 'h
 const USE_REMOTE_EMBEDDINGS = EMBEDDING_MODE === 'remote' || EMBEDDING_MODE === 'workers';
 const REMOTE_INFERENCE_REQUIRED = /^true$/i.test(process.env.REMOTE_INFERENCE_REQUIRED || "false");
 
-// Batches larger than this always use OpenAI/Gemini regardless of EMBEDDING_MODE.
+// Hybrid mode uses OpenAI for batches above this threshold.
 const LARGE_BATCH_THRESHOLD = Number(process.env.LARGE_BATCH_THRESHOLD ?? 20);
 
 // ── OpenAI ──────────────────────────────────────────────────────────────────
@@ -112,13 +112,12 @@ export async function embed(texts: string[]): Promise<number[][]> {
     return embedWithGemini(texts);
   }
 
-  // Large batches always go to OpenAI — GPU parallelism makes it 10-30x faster than local CPU.
-  if (texts.length > LARGE_BATCH_THRESHOLD) {
+  if (EMBEDDING_MODE === 'hybrid' && texts.length > LARGE_BATCH_THRESHOLD) {
     console.log(`[Embeddings] Batch size ${texts.length} > ${LARGE_BATCH_THRESHOLD}, using OpenAI`);
     return embedWithOpenAI(texts);
   }
 
-  // Small batches: use local if enabled (free, no network overhead)
+  // Explicit local mode keeps every batch local.
   if (USE_LOCAL_EMBEDDINGS) {
     try {
       const embeddings = await embedLocal(texts);

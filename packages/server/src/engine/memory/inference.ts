@@ -142,7 +142,7 @@ async function runWithOpenAI(message: string, context: string, model: string): P
     ],
     ...getProviderSpecificModelParams(model),
     response_format: { type: "json_object" as const },
-  };
+  } as unknown as Parameters<typeof client.chat.completions.create>[0];
   const fallbackParams = {
     model,
     ...getMaxOutputTokensParam(model, 512),
@@ -152,7 +152,7 @@ async function runWithOpenAI(message: string, context: string, model: string): P
       { role: "user", content: `${userContent}\n\nReturn ONLY a valid JSON object with a top-level "memories" array.` },
     ],
     ...getProviderSpecificModelParams(model),
-  };
+  } as unknown as Parameters<typeof client.chat.completions.create>[0];
 
   let response;
   try {
