@@ -19,6 +19,7 @@ async function ensureTransformersLoaded() {
         // Configure transformers.js
         env.allowLocalModels = false; // Use CDN models for easier deployment
         env.useBrowserCache = false; // Use disk cache in Node.js
+        env.backends.onnx.wasm.numThreads = 1;
       } catch {
         console.warn('[LocalEmbeddings] @xenova/transformers not installed, local embeddings disabled');
         console.warn('[LocalEmbeddings] Install with: npm install @xenova/transformers');

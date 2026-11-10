@@ -103,6 +103,8 @@ Server runs on `http://localhost:3000`.
 
 Keep `ENCRYPTION_KEY` stable across restarts so stored agent credentials remain readable. Local BGE embeddings do not require an OpenAI key; the first request downloads the model. Explicit `EMBEDDING_MODE=local` keeps all batches local, including large documents. Set `EMBEDDING_MODE=openai` and `OPENAI_API_KEY` to use OpenAI embeddings instead; hybrid mode switches large batches to OpenAI. LLM extraction and research still require an OpenAI key.
 
+Local inference prefers the native CPU backend. If model construction falls back to WebAssembly, the Server uses a single WASM thread because Node cannot start the browser Blob workers used by the pinned ONNX runtime. This does not limit native CPU inference threads or switch embedding providers.
+
 To verify the packaged Prisma client and migration CLI without network access or a running database:
 
 ```bash
