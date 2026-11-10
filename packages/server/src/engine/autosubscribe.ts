@@ -112,7 +112,14 @@ export function parseCargoToml(content: string): PackageDependency[] {
 export function parseDependencyFile(
   filename: string,
   content: string
-): Promise<PackageDependency[]> | PackageDependency[] {
+): Promise<PackageDependency[]> {
+  return parseDependencyFileAsync(filename, content);
+}
+
+async function parseDependencyFileAsync(
+  filename: string,
+  content: string
+): Promise<PackageDependency[]> {
   if (filename === "package.json") {
     return parsePackageJson(content);
   } else if (filename === "requirements.txt" || filename.endsWith(".txt")) {

@@ -51,10 +51,7 @@ export async function initializeRedis(redisUrl?: string): Promise<void> {
   }
 
   try {
-    const redisModule = "redis";
-    const { createClient } = (await import(redisModule)) as {
-      createClient: (options: Record<string, unknown>) => any;
-    };
+    const { createClient } = await import("redis");
     _redisClient = createClient({
       url: redisUrl || process.env.REDIS_URL,
       socket: {

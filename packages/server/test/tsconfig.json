@@ -5,5 +5,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["../src/db/index.ts", "./*.test.ts"]
+  "include": ["../src/db/index.ts", "../src/types/**/*.d.ts", "./*.test.ts"]
 }

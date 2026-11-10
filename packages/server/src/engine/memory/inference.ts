@@ -13,6 +13,17 @@ function getOpenAI(): OpenAI | null {
   });
 }
 
+type ChatParams = Parameters<OpenAI["chat"]["completions"]["create"]>[0];
+
+/**
+ * OpenAI-compatible providers accept routing fields (`reasoning_effort`,
+ * `reasoning_format`) that the SDK types narrow or omit. This helper is the
+ * single place where that widening happens.
+ */
+function providerChatParams(params: Record<string, unknown>): ChatParams {
+  return params as unknown as ChatParams;
+}
+
 function shouldRetryWithoutStructuredOutput(err: any): boolean {
   const message = String(err?.message || "");
   return err?.status === 400 && /Failed to generate JSON|Failed to validate JSON|tool_use_failed|json_validate_failed/i.test(message);
@@ -132,7 +143,7 @@ async function runWithOpenAI(message: string, context: string, model: string): P
     context ? `## Context\n${context}` : null,
     `## Message\n${message}`,
   ].filter(Boolean).join("\n\n");
-  const structuredParams = {
+  const structuredParams = providerChatParams({
     model,
     ...getMaxOutputTokensParam(model, 512),
     temperature: 0.1,
@@ -142,8 +153,8 @@ async function runWithOpenAI(message: string, context: string, model: string): P
     ],
     ...getProviderSpecificModelParams(model),
     response_format: { type: "json_object" as const },
-  } as unknown as Parameters<typeof client.chat.completions.create>[0];
-  const fallbackParams = {
+  });
+  const fallbackParams = providerChatParams({
     model,
     ...getMaxOutputTokensParam(model, 512),
     temperature: 0.1,
@@ -152,7 +163,7 @@ async function runWithOpenAI(message: string, context: string, model: string): P
       { role: "user", content: `${userContent}\n\nReturn ONLY a valid JSON object with a top-level "memories" array.` },
     ],
     ...getProviderSpecificModelParams(model),
-  } as unknown as Parameters<typeof client.chat.completions.create>[0];
+  });
 
   let response;
   try {
