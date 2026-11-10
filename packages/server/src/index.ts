@@ -5,6 +5,7 @@ import { api } from "./api/routes.js";
 import { startScheduler } from "./engine/scheduler.js";
 import { startEmbeddingWorker } from "./engine/workers/embedding-worker.js";
 import { recoverInterruptedJobs } from "./engine/sync-queue.js";
+import { startNativeCaptureWorker } from "./engine/native-capture.js";
 
 process.on("uncaughtException", (err) => {
   console.error("[RetainDB] Uncaught Exception:", err.message);
@@ -36,6 +37,7 @@ serve({ fetch: app.fetch, port }, async () => {
   console.log(`\n🧠 RetainDB running on http://localhost:${port}\n`);
 
   if (process.send) process.send("ready");
+  startNativeCaptureWorker();
 
   // Start async embedding worker
   startEmbeddingWorker().catch((err) =>

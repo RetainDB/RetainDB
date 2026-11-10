@@ -76,7 +76,7 @@ export async function printContextPack(data, hookType, query) {
   try {
     const pack = await buildContextPack(data, hookType, query);
     if (pack?.context_hash) process.env[`RETAINDB_CONTEXT_HASH_${hookMeta(data).sessionId}`] = pack.context_hash;
-    const text = pack?.delta_context || pack?.context;
+    const text = pack?.delta_context ?? pack?.context;
     if (text && String(text).trim()) process.stdout.write(`\nRetainDB compact context:\n${text}\n`);
   } catch {
     // Hooks must never block the agent.
