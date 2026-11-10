@@ -8,6 +8,7 @@ on:
       - "packages/server/**"
       - "packages/local/**"
       - "scripts/check-server-compose.mjs"
+      - "scripts/server-compose-readiness.mjs"
       - "pnpm-lock.yaml"
       - "package.json"
   push:
@@ -19,6 +20,7 @@ on:
       - "packages/server/**"
       - "packages/local/**"
       - "scripts/check-server-compose.mjs"
+      - "scripts/server-compose-readiness.mjs"
       - "pnpm-lock.yaml"
       - "package.json"
 

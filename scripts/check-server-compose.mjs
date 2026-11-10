@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { waitForNativeCapture, waitForServerReady } from "./server-compose-readiness.mjs";
 
 const project = `retaindb-compose-${randomUUID()}`;
 const composeArgs = ["compose", "--project-name", project, "--file", "docker-compose.yml", "--file", "docker-compose.ci.yml"];
@@ -42,16 +43,19 @@ function query(sql) {
 }
 
 async function waitForReady() {
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
-    if (response?.ok) {
-      const logs = compose(["logs", "--no-color", "server"]);
-      if (logs.includes("Local embedding model ready")) return;
-      assert.ok(!logs.includes("Local model pre-load failed"), "Local embedding model failed to initialize");
-    }
-    await delay(2000);
-  }
-  throw new Error("Compose API and local embedding model did not become ready");
+  const serverId = compose(["ps", "--quiet", "server"]).trim();
+  const inspected = spawnSync("docker", ["inspect", "--format", "{{.State.StartedAt}}", serverId], {
+    encoding: "utf8", env: environment, timeout: 30_000, killSignal: "SIGKILL",
+  });
+  if (inspected.error) throw inspected.error;
+  assert.equal(inspected.status, 0, inspected.stderr || inspected.stdout);
+  const startedAt = inspected.stdout.trim();
+  assert.match(startedAt, /^\d{4}-\d{2}-\d{2}T/);
+  await waitForServerReady({
+    startedAt,
+    health: () => fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null),
+    logs: since => compose(["logs", "--no-color", "--since", since, "server"]),
+  });
 }
 
 const keepAlive = setInterval(() => {}, 1000);
@@ -150,12 +154,7 @@ try {
   console.log("Native event accepted durably; restarting during indexing");
   compose(["restart", "server"]);
   await waitForReady();
-  let captured;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    captured = await request(`/v1/agent-events/${observe.event_id}`);
-    if (captured.status === "indexed") break;
-    await delay(500);
-  }
+  const captured = await waitForNativeCapture(() => request(`/v1/agent-events/${observe.event_id}`, undefined, 3000));
   assert.equal(captured.status, "indexed", JSON.stringify(captured));
   console.log("Native event recovered after restart");
   assert.equal(query(`SELECT COUNT(*) FROM messages WHERE id='${observe.event_id}'`), "1");
