@@ -533,7 +533,7 @@ async function vectorSearchMemories(params: {
       confidence,
       version,
       scope,
-      "scopeTarget" as "scopeTarget",
+      scope as "scopeTarget",
       "userId" as "userId",
       "sessionId" as "sessionId",
       "agentId" as "agentId",
