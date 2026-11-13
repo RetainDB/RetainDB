@@ -198,6 +198,7 @@ export async function seedAgentIdentity(params: {
         entityMentions: [],
         writeSource: params.source ?? "soul_md",
         writeMode: "source_extract",
+        extractionMethod: "soul_md_seed",
         scopeHint: "AGENT",
         metadata: { seeded_from: params.source ?? "soul_md", agent_id: params.agentId },
       });

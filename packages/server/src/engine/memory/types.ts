@@ -154,6 +154,7 @@ export interface MemorySearchResult {
     sessionId?: string | null;
     agentId?: string | null;
     taskId?: string | null;
+    metadata: Record<string, unknown>;
     temporal: {
       documentDate: Date | null;
       eventDate: Date | null;

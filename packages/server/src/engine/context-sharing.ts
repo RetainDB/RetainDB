@@ -125,10 +125,7 @@ export async function createSharedContext(params: {
   if (includeMessages) {
     const messages = await db.message.findMany({
       where: {
-        OR: [
-          { sessionId: session.id },
-          { conversationId: session.id },
-        ],
+        sessionId: session.id,
       },
       orderBy: { createdAt: "asc" },
       take: 500,
@@ -348,7 +345,6 @@ export async function resumeFromSharedContext(params: {
       await db.message.create({
         data: {
           sessionId,
-          conversationId: sessionId,
           role: msg.role,
           content: msg.content,
           metadata: {

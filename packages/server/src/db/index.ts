@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: ReturnType<typeof createPrismaClient> | undefined;
 };
 
 function buildDatabaseUrl(): string | undefined {
@@ -27,36 +27,44 @@ function buildDatabaseUrl(): string | undefined {
   }
 }
 
-export const db = globalForPrisma.prisma ?? new PrismaClient({
-  datasources: {
-    db: {
-      url: buildDatabaseUrl(),
+function createPrismaClient() {
+  return new PrismaClient({
+    datasources: {
+      db: {
+        url: buildDatabaseUrl(),
+      },
     },
-  },
-});
+  }).$extends({
+    name: "bigint-to-string",
+    query: {
+      async $allOperations({ args, query }) {
+        const result = await query(args);
+        return hasBigInt(result) ? convertBigIntToString(result) : result;
+      },
+    },
+  });
+}
+
+export const db = globalForPrisma.prisma ?? createPrismaClient();
 export const prisma = db;
 
-// Single middleware — converts BigInt to string at the DB boundary.
-// Arrays are already covered by the object branch since Array is also typeof "object".
-prisma.$use(async (params, next) => {
-  const result = await next(params);
-  return hasBigInt(result) ? convertBigIntToString(result) : result;
-});
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
-// Fast check before doing full recursive traversal
-function hasBigInt(obj: any): boolean {
-  if (obj === null || obj === undefined) return false;
+function hasBigInt(obj: unknown): boolean {
   if (typeof obj === "bigint") return true;
   if (Array.isArray(obj)) return obj.some(hasBigInt);
-  if (typeof obj === "object") return Object.values(obj).some(hasBigInt);
+  if (isPlainObject(obj)) return Object.values(obj).some(hasBigInt);
   return false;
 }
 
-function convertBigIntToString(obj: any): any {
-  if (obj === null || obj === undefined) return obj;
+function convertBigIntToString(obj: unknown): unknown {
   if (typeof obj === "bigint") return obj.toString();
   if (Array.isArray(obj)) return obj.map(convertBigIntToString);
-  if (typeof obj === "object") {
+  if (isPlainObject(obj)) {
     return Object.fromEntries(
       Object.entries(obj).map(([k, v]) => [k, convertBigIntToString(v)])
     );

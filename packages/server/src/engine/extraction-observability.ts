@@ -413,7 +413,7 @@ export async function getExtractionGateStatus(params?: {
   if (params?.tenantId) {
     filters.push(Prisma.sql`"orgId" = ${params.tenantId}`);
   }
-  const whereSql = Prisma.join(filters, Prisma.sql` AND `);
+  const whereSql = Prisma.join(filters, " AND ");
 
   const tenantRows = await prisma.$queryRaw<Array<{
     tenant_id: string;
@@ -481,7 +481,7 @@ export async function getExtractionStats(params?: {
   if (params?.projectId) {
     filters.push(Prisma.sql`"projectId" = ${params.projectId}`);
   }
-  const scopedWhere = Prisma.join(filters, Prisma.sql` AND `);
+  const scopedWhere = Prisma.join(filters, " AND ");
 
   const perTenant = await prisma.$queryRaw<Array<{
     tenant_id: string;
@@ -745,7 +745,14 @@ export async function countConfirmEventsForTenant(params: {
   tenantId: string;
   since: Date;
 }): Promise<number> {
-  return count;
+  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*)::bigint AS count
+    FROM usage_events
+    WHERE "orgId" = ${params.tenantId}
+      AND "createdAt" >= ${params.since}
+      AND "eventType" = 'memory_confirm_event'
+  `;
+  return Number(rows[0]?.count ?? 0);
 }
 
 export async function emitMemoryConfirmEvent(params: {

@@ -9,7 +9,7 @@ type MemoryRecord = {
   entityMentions: string[];
   createdAt: Date;
   updatedAt: Date;
-  lastRecalledAt: Date | null;
+  lastAccessedAt: Date | null;
   metadata: unknown;
 };
 
@@ -174,7 +174,7 @@ function computeCoverage(memories: MemoryRecord[], profile: Omit<UserModelProfil
   const recallCoverage =
     memories.length === 0
       ? 0
-      : memories.filter((memory) => memory.lastRecalledAt !== null).length / memories.length;
+      : memories.filter((memory) => memory.lastAccessedAt !== null).length / memories.length;
   return Number((fieldCoverage * 0.55 + evidenceCoverage * 0.3 + recallCoverage * 0.15).toFixed(2));
 }
 
@@ -213,7 +213,7 @@ export async function loadUserModelMemories(params: {
       entityMentions: true,
       createdAt: true,
       updatedAt: true,
-      lastRecalledAt: true,
+      lastAccessedAt: true,
       metadata: true,
     },
     orderBy: [

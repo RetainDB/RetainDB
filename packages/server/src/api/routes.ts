@@ -34,6 +34,7 @@ import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { memoryRoutes } from "./memory.js";
 import { contextRoutes } from "./context.js";
+import { nativeHookRoutes } from "./native-hooks.js";
 import { optimizationRoutes } from "./optimization.js";
 import { searchRoutes } from "./search.js";
 import { fileRoutes } from "./files.js";
@@ -207,6 +208,7 @@ api.use("/*", async (c, next) => {
 // Mount SOTA memory, context, and optimization APIs
 api.route("/", memoryRoutes);
 api.route("/", contextRoutes);
+api.route("/", nativeHookRoutes);
 api.route("/", optimizationRoutes);
 api.route("/", searchRoutes);
 api.route("/", fileRoutes);
@@ -228,7 +230,7 @@ function getNodeRouteMatrix() {
 
 function serializeSource(source: any, activeJob?: any) {
   const activeVersion = source.activeVersion || null;
-  const latestVersion = source.sourceVersions?.[0] || activeVersion;
+  const latestVersion = source.versions?.[0] || activeVersion;
   const jobResult = (activeJob?.result || {}) as Record<string, any>;
   return {
     id: String(source.id),
@@ -256,7 +258,7 @@ function serializeSource(source: any, activeJob?: any) {
         ? "failed"
         : "success",
     active_version: source.activeVersionId || null,
-    restore_until: null,
+    restore_until: source.restoreUntil ?? null,
   };
 }
 
@@ -278,7 +280,8 @@ const sourceSummarySelect = {
   createdAt: true,
   updatedAt: true,
   activeVersionId: true,
-  sourceVersions: {
+  restoreUntil: true,
+  versions: {
     take: 1,
     orderBy: { createdAt: "desc" as const },
     select: {
@@ -300,7 +303,7 @@ const sourceSummarySelect = {
       orgId: true,
     },
   },
-};
+} satisfies Prisma.SourceSelect;
 
 function serializeSyncJob(job: any) {
   const result = (job?.result || {}) as Record<string, any>;
@@ -620,8 +623,9 @@ function mergeIndexSourceConfig(input: z.infer<typeof indexApiSourceSchema>): Re
 
 async function ensureDirectIngestSource(projectId: string, orgId: string) {
   const directIngestName = `direct-ingest-${projectId}`;
-  let directSource = await prisma.source.findFirst({
+  const findSource = () => prisma.source.findFirst({
     where: {
+      orgId,
       projectId,
       connectorType: "custom",
       OR: [
@@ -630,9 +634,11 @@ async function ensureDirectIngestSource(projectId: string, orgId: string) {
       ],
     },
   });
+  const directSource = await findSource();
+  if (directSource) return directSource;
 
-  if (!directSource) {
-    directSource = await prisma.source.create({
+  try {
+    return await prisma.source.create({
       data: {
         orgId,
         projectId,
@@ -643,9 +649,13 @@ async function ensureDirectIngestSource(projectId: string, orgId: string) {
         status: "READY",
       },
     });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const concurrent = await findSource();
+      if (concurrent) return concurrent;
+    }
+    throw error;
   }
-
-  return directSource;
 }
 
 async function learnTextContent(params: {
@@ -2299,24 +2309,24 @@ api.get("/v1/sources/:sourceId/status", async (c) => {
       entities_extracted: result.entitiesExtracted ?? [],
       last_error: source.syncError || source.lastSyncError || activeJob?.error || null,
       updated_at: source.updatedAt,
-      partial_failure: result.partialFailure ?? source.sourceVersions?.[0]?.partialFailure ?? false,
-      documents_total: result.documentsTotal ?? source.sourceVersions?.[0]?.documentCount ?? source.documentCount ?? null,
-      documents_indexed: result.documentsIndexed ?? source.sourceVersions?.[0]?.documentCount ?? source.documentCount ?? null,
+      partial_failure: result.partialFailure ?? source.versions?.[0]?.partialFailure ?? false,
+      documents_total: result.documentsTotal ?? source.versions?.[0]?.documentCount ?? source.documentCount ?? null,
+      documents_indexed: result.documentsIndexed ?? source.versions?.[0]?.documentCount ?? source.documentCount ?? null,
       documents_failed: result.documentsFailed ?? 0,
-      warning_codes: result.warningCodes ?? source.sourceVersions?.[0]?.warningCodes ?? [],
-      error_code: result.errorCode ?? source.sourceVersions?.[0]?.errorCode ?? null,
+      warning_codes: result.warningCodes ?? source.versions?.[0]?.warningCodes ?? [],
+      error_code: result.errorCode ?? source.versions?.[0]?.errorCode ?? null,
       outcome:
         result.outcome ||
-        ((result.partialFailure ?? source.sourceVersions?.[0]?.partialFailure)
+        ((result.partialFailure ?? source.versions?.[0]?.partialFailure)
           ? "partial_failure"
-          : (result.errorCode ?? source.sourceVersions?.[0]?.errorCode)
+          : (result.errorCode ?? source.versions?.[0]?.errorCode)
             ? "failed"
             : "success"),
       mode: result.mode ?? activeJob?.mode ?? null,
       effective_mode: result.effectiveMode ?? activeJob?.effectiveMode ?? null,
       active_version: source.activeVersionId ?? null,
       restore_until: source.restoreUntil ?? null,
-      latest_version: source.sourceVersions?.[0] ? serializeSourceVersion(source.sourceVersions[0]) : null,
+      latest_version: source.versions?.[0] ? serializeSourceVersion(source.versions[0]) : null,
     })
   );
 });
@@ -3601,4 +3611,3 @@ api.post(
 );
 
 // ─── SimpleClaw Provisioning (Admin only) ────────────────────
-

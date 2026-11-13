@@ -1,7 +1,5 @@
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai-client.js";
 import { createHash } from "crypto";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -193,7 +191,7 @@ async function extractCompress(
   maxTokens: number
 ): Promise<CompressedContext> {
   try {
-    const res = await openai.chat.completions.create({
+    const res = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini", // Fixed: was "gpt-4.1-nano" which doesn't exist
       messages: [
         {
@@ -252,7 +250,7 @@ async function summarizeCompress(
       blocks.map(async (block) => {
         if (estimateTokens(block) <= budgetPerBlock) return block;
 
-        const res = await openai.chat.completions.create({
+        const res = await getOpenAIClient().chat.completions.create({
           model: "gpt-4o-mini", // Fixed: was "gpt-4.1-nano" which doesn't exist
           messages: [
             {
@@ -310,7 +308,7 @@ export async function summarizeChunk(content: string, chunkType: string): Promis
       ? "Summarize this code in 2-3 sentences. Include: function/class names, what it does, parameters, return type."
       : "Summarize this text in 2-3 sentences. Preserve key facts, names, and important details.";
 
-    const res = await openai.chat.completions.create({
+    const res = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini", // Fixed: was "gpt-4.1-nano" which doesn't exist
       messages: [
         { role: "system", content: prompt },
@@ -353,6 +351,7 @@ function startCacheCleanup() {
       if (now - val.timestamp > DELTA_CACHE_TTL) deltaCache.delete(key);
     }
   }, 60_000);
+  cacheCleanupInterval.unref();
 }
 
 export function stopCacheCleanup() {

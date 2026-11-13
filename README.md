@@ -95,10 +95,19 @@ Use this path when you want the full API server with Postgres and pgvector.
 ```bash
 git clone https://github.com/retaindb/retaindb
 cd retaindb
+export ENCRYPTION_KEY="$(openssl rand -hex 32)"
 docker compose up
 ```
 
 Server runs on `http://localhost:3000`.
+
+Keep `ENCRYPTION_KEY` stable across restarts so stored agent credentials remain readable. Local BGE embeddings do not require an OpenAI key; the first request downloads the model. Explicit `EMBEDDING_MODE=local` keeps all batches local, including large documents. Set `EMBEDDING_MODE=openai` and `OPENAI_API_KEY` to use OpenAI embeddings instead; hybrid mode switches large batches to OpenAI. LLM extraction and research still require an OpenAI key.
+
+Local inference prefers the native CPU backend. If model construction falls back to WebAssembly, the Server uses a single WASM thread because Node cannot start the browser Blob workers used by the pinned ONNX runtime. This does not limit native CPU inference threads or switch embedding providers.
+
+Use pgvector 0.8 or later for filtered HNSW retrieval. Document and memory vector searches enable strict iterative scans inside their own transaction so project, source, type and metadata filters can continue past unrelated neighbors without changing pooled connection settings. Approximate search still has pgvector's scan limits. Compose supplies pgvector; an existing PostgreSQL installation must upgrade its extension separately.
+
+Database upgrades preserve existing organization IDs, ownership and slugs. If another organization already uses the `default` slug, the ownerless default organization receives an available `default-oss-N` slug instead. Previously deployed migration files remain unchanged.
 
 ### Node + Postgres
 
@@ -107,11 +116,65 @@ git clone https://github.com/retaindb/retaindb
 cd retaindb
 cp .env.example packages/server/.env
 pnpm install
-pnpm --filter @retaindb/server run db:push
+pnpm --filter @retaindb/server run db:generate
+pnpm --filter @retaindb/server exec prisma migrate deploy
 pnpm dev:server
 ```
 
 Postgres must have the `pgvector` extension enabled.
+
+Set a stable `ENCRYPTION_KEY` in `packages/server/.env` before starting the server. Apply the committed migrations with `prisma migrate deploy`; do not replace an existing database with the generated Prisma schema. The migration history also contains legacy tables not managed by the current server client.
+
+Concurrent synchronous text learns reuse one ingestion source per project.
+Source-version allocation is serialized in PostgreSQL for each source, so
+first writes and staged syncs do not race to allocate the same version number.
+Retained version-number gaps are preserved rather than reused.
+
+Batch ingestion binds source versions before submitting queued work. A failed
+batch waits for its submitted tasks to settle before returning an error, so
+connector failure handling cannot race later writes from that batch. Documents
+remain `PROCESSING` during a rebuild and become `READY` after chunk persistence.
+A required embedding or persistence failure records `ERROR`; a successful retry
+clears the previous `parseError`. Default best-effort embedding behavior is
+unchanged; callers supplying `embedTexts` require those embeddings to succeed.
+
+### Coding-agent hooks with PostgreSQL
+
+The Server accepts the native Local hooks at `POST /retaindb/observe` and
+`POST /v1/agent-events`. Point `RETAINDB_BASE_URL` at the Server and set
+`RETAINDB_API_KEY` for both the hook process and Server. Keep the existing
+project and session identifiers in the hook payload.
+
+A successful capture returns HTTP 202 only after the event is committed to
+PostgreSQL. It is not a claim that embeddings are ready. The Server indexes
+accepted events in the background with the configured embedding provider;
+pending events resume after restart. Repeating the same event payload reuses
+its receipt. `GET /v1/agent-events/:eventId` reports `pending`, `processing`
+or `indexed`, including retry diagnostics when embedding fails. Recognized
+credentials, connection-URL user information and complete private-key blocks
+are redacted before captured data is persisted. Redaction is not a substitute
+for keeping unrelated secrets out of captured tool output.
+
+Native capture embeddings run in a reusable child process with a bounded
+attempt deadline (120 seconds by default; `NATIVE_CAPTURE_EMBEDDING_TIMEOUT_MS`
+can lower it). A stalled process, failure reply or invalid vector reply causes
+termination, and the Server waits for the child to close before another attempt.
+Retry delays start when the failure is recorded, not when inference began.
+The child cannot retain the queue or perform late database writes. Receipt and
+document writes remain in the Server process under exclusive database row
+ownership, which is released immediately if that process exits.
+
+The vector-index migration replaces the initially empty IVFFlat indexes
+with HNSW indexes. HNSW does not require training data, so retrieval can
+work immediately after the first import without rebuilding an index.
+
+The Server also supports `POST /v1/context/pack`, `POST /v1/context/delta`
+and `POST /v1/context/compress-output` without a cloud model. Context packs
+combine indexed documents and memories within the requested project and
+token budget. An unchanged context hash returns an empty delta, which CLI and
+plugin hooks preserve rather than replacing it with the previous full context. Client `cwd`
+and `files` paths are diagnosed, not read from the Server filesystem; ingest
+those files through the source APIs first.
 
 ## RetainDB Local
 
@@ -504,9 +567,22 @@ Server development:
 
 ```bash
 cp .env.example packages/server/.env
-pnpm --filter @retaindb/server run db:push
+pnpm --filter @retaindb/server run db:generate
+pnpm --filter @retaindb/server exec prisma migrate deploy
 pnpm dev:server
 ```
+
+Run the Server tests:
+
+```bash
+pnpm --filter @retaindb/server test
+```
+
+Unit tests run without a database. Integration tests run when
+`RETAINDB_TEST_DATABASE_URL` points at a dedicated PostgreSQL database with
+pgvector and the migrations applied; they create and drop their own temporary
+databases, so the test role needs permission to do that. Never point them at a
+production memory store.
 
 ## Contributing
 

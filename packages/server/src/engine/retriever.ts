@@ -121,6 +121,10 @@ export interface ContextResponse {
       matchedSources?: number;
     };
     profile?: string;
+    degraded?: {
+      reranked: boolean;
+      reasons: string[];
+    };
     retrievalProfile?: RetrievalProfile;
     sourceFamily?: string;
     timing?: {
@@ -156,6 +160,18 @@ export interface ContextResponse {
 }
 
 // ─── Main Query Function ─────────────────────────────────────
+
+export async function applyRerank<T>(
+  results: T[],
+  rerank: (results: T[]) => Promise<T[]>,
+): Promise<{ results: T[]; degraded: boolean }> {
+  try {
+    return { results: await rerank(results), degraded: false };
+  } catch (error) {
+    console.warn("[Retriever] Reranking unavailable, returning fused order:", error instanceof Error ? error.message : error);
+    return { results, degraded: true };
+  }
+}
 
 export async function retrieve(opts: QueryOptions): Promise<ContextResponse> {
   const defaultRetrievalProfile: RetrievalProfile = RETRIEVAL_PRECISION_V1_DEFAULT ? "precision_v1" : "legacy";
@@ -496,13 +512,17 @@ export async function retrieve(opts: QueryOptions): Promise<ContextResponse> {
   }
 
   // ─── Rerank with LLM ────────────────────────────────────
+  const degradedReasons: string[] = [];
   if (rerank && allResults.length > 0) {
     const tRerank = Date.now();
-    const reranked = await rerankResults(query, allResults, rerankTopK || topK, {
-      startTimeMs: startTime,
-      requestBudgetMs: RERANK_BUDGET_MS,
-    });
-    allResults = reranked;
+    const outcome = await applyRerank(allResults, (candidates) =>
+      rerankResults(query, candidates, rerankTopK || topK, {
+        startTimeMs: startTime,
+        requestBudgetMs: RERANK_BUDGET_MS,
+      }),
+    );
+    allResults = outcome.results;
+    if (outcome.degraded) degradedReasons.push("reranker_unavailable");
     timing.rerank_ms = Date.now() - tRerank;
   }
 
@@ -577,6 +597,7 @@ export async function retrieve(opts: QueryOptions): Promise<ContextResponse> {
       profile: RETRIEVAL_PROFILE,
       retrievalProfile,
       sourceFamily,
+      degraded: { reranked: degradedReasons.length === 0, reasons: degradedReasons },
       timing,
     },
   };
@@ -946,17 +967,23 @@ async function vectorSearch(
     ? Prisma.sql`AND id = ANY(${scopedChunkIds}::uuid[])`
     : Prisma.empty;
 
-  let results: any;
-  if (chunkTypes && chunkTypes.length > 0 && metadataJson) {
-    results = await prisma.$queryRaw`
+  const chunkTypeFilterSql = chunkTypes?.length
+    ? Prisma.sql`AND "chunkType" = ANY(${chunkTypes})`
+    : Prisma.empty;
+  const metadataFilterSql = metadataJson
+    ? Prisma.sql`AND metadata @> ${metadataJson}::jsonb`
+    : Prisma.empty;
+  const results = await prisma.$transaction(async tx => {
+    await tx.$executeRaw`SET LOCAL hnsw.iterative_scan = strict_order`;
+    return tx.$queryRaw<any[]>`
       SELECT
         id, content, "chunkType", metadata, "parentChunkId", "sectionPath", "headingPath",
         1 - (embedding <=> ${embeddingStr}::vector) as similarity
       FROM chunks
       WHERE "projectId" = ${projectId}
         AND embedding IS NOT NULL
-        AND "chunkType" = ANY(${chunkTypes})
-        AND metadata @> ${metadataJson}::jsonb
+        ${chunkTypeFilterSql}
+        ${metadataFilterSql}
         AND COALESCE(metadata->>'content_kind', '') <> 'parent_context'
         ${chunkIdFilterSql}
         AND EXISTS (
@@ -974,86 +1001,9 @@ async function vectorSearch(
       ORDER BY embedding <=> ${embeddingStr}::vector
       LIMIT ${limit}
     `;
-  } else if (chunkTypes && chunkTypes.length > 0) {
-    results = await prisma.$queryRaw`
-      SELECT
-        id, content, "chunkType", metadata, "parentChunkId", "sectionPath", "headingPath",
-        1 - (embedding <=> ${embeddingStr}::vector) as similarity
-      FROM chunks
-      WHERE "projectId" = ${projectId}
-        AND embedding IS NOT NULL
-        AND "chunkType" = ANY(${chunkTypes})
-        AND COALESCE(metadata->>'content_kind', '') <> 'parent_context'
-        ${chunkIdFilterSql}
-        AND EXISTS (
-          SELECT 1
-          FROM documents d
-          INNER JOIN sources s ON s.id = d."sourceId"
-          WHERE d.id = chunks."documentId"
-            AND d."deletedAt" IS NULL
-            ${sourceFilterSql}
-            AND (
-              s."activeVersionId" IS NULL
-              OR d."sourceVersionId" = s."activeVersionId"
-            )
-        )
-      ORDER BY embedding <=> ${embeddingStr}::vector
-      LIMIT ${limit}
-    `;
-  } else if (metadataJson) {
-    results = await prisma.$queryRaw`
-      SELECT
-        id, content, "chunkType", metadata, "parentChunkId", "sectionPath", "headingPath",
-        1 - (embedding <=> ${embeddingStr}::vector) as similarity
-      FROM chunks
-      WHERE "projectId" = ${projectId}
-        AND embedding IS NOT NULL
-        AND metadata @> ${metadataJson}::jsonb
-        AND COALESCE(metadata->>'content_kind', '') <> 'parent_context'
-        ${chunkIdFilterSql}
-        AND EXISTS (
-          SELECT 1
-          FROM documents d
-          INNER JOIN sources s ON s.id = d."sourceId"
-          WHERE d.id = chunks."documentId"
-            AND d."deletedAt" IS NULL
-            ${sourceFilterSql}
-            AND (
-              s."activeVersionId" IS NULL
-              OR d."sourceVersionId" = s."activeVersionId"
-            )
-        )
-      ORDER BY embedding <=> ${embeddingStr}::vector
-      LIMIT ${limit}
-    `;
-  } else {
-    results = await prisma.$queryRaw`
-      SELECT
-        id, content, "chunkType", metadata, "parentChunkId", "sectionPath", "headingPath",
-        1 - (embedding <=> ${embeddingStr}::vector) as similarity
-      FROM chunks
-      WHERE "projectId" = ${projectId}
-        AND embedding IS NOT NULL
-        AND COALESCE(metadata->>'content_kind', '') <> 'parent_context'
-        ${chunkIdFilterSql}
-        AND EXISTS (
-          SELECT 1
-          FROM documents d
-          INNER JOIN sources s ON s.id = d."sourceId"
-          WHERE d.id = chunks."documentId"
-            AND d."deletedAt" IS NULL
-            ${sourceFilterSql}
-            AND (
-              s."activeVersionId" IS NULL
-              OR d."sourceVersionId" = s."activeVersionId"
-            )
-        )
-      ORDER BY embedding <=> ${embeddingStr}::vector
-      LIMIT ${limit}
-    `;
-  }
+  });
 
-  return (results as any[]).map((r) => ({
+  return results.map((r) => ({
     id: r.id,
     content: r.content,
     score: r.similarity,

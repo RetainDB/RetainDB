@@ -1,6 +1,4 @@
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { getOpenAIClient } from "./openai-client.js";
 
 /**
  * Extract structured data from HTML matching a given schema.
@@ -18,7 +16,7 @@ export async function extractWithSchema(
     .map(([k, v]) => `  "${k}": ${v}`)
     .join(",\n");
 
-  const resp = await openai.chat.completions.create({
+  const resp = await getOpenAIClient().chat.completions.create({
     model,
     temperature: 0,
     max_tokens: 2000,
@@ -111,7 +109,7 @@ export async function detectPricing(
   };
 
   const truncated = html.substring(0, 40000);
-  const resp = await openai.chat.completions.create({
+  const resp = await getOpenAIClient().chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0,
     max_tokens: 2000,

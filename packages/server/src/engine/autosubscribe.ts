@@ -112,7 +112,14 @@ export function parseCargoToml(content: string): PackageDependency[] {
 export function parseDependencyFile(
   filename: string,
   content: string
-): PackageDependency[] {
+): Promise<PackageDependency[]> {
+  return parseDependencyFileAsync(filename, content);
+}
+
+async function parseDependencyFileAsync(
+  filename: string,
+  content: string
+): Promise<PackageDependency[]> {
   if (filename === "package.json") {
     return parsePackageJson(content);
   } else if (filename === "requirements.txt" || filename.endsWith(".txt")) {
@@ -274,7 +281,7 @@ export async function autosubscribe(params: {
     }
 
     // Step 2: Parse dependencies
-    const dependencies = parseDependencyFile(depFile.filename, depFile.content);
+    const dependencies = await parseDependencyFile(depFile.filename, depFile.content);
     result.discovered = dependencies.length;
 
     console.log(`📦 Discovered ${dependencies.length} dependencies`);
@@ -321,20 +328,11 @@ export async function autosubscribe(params: {
         });
 
         // Index the package docs
+        const packageSourceId = await ensurePackageSource(projectId, orgId, dep);
         if (dep.ecosystem === "npm") {
-          await syncNpmPackage({
-            packageName: dep.name,
-            version: dep.version,
-            projectId,
-            orgId,
-          });
+          await syncNpmPackage(packageSourceId, projectId, { packageName: dep.name });
         } else if (dep.ecosystem === "pypi") {
-          await syncPyPIPackage({
-            packageName: dep.name,
-            version: dep.version,
-            projectId,
-            orgId,
-          });
+          await syncPyPIPackage(packageSourceId, projectId, { packageName: dep.name });
         }
 
         result.indexed++;
@@ -364,6 +362,28 @@ export async function autosubscribe(params: {
 /**
  * Auto-sync: Re-index packages when they're updated
  */
+export async function ensurePackageSource(
+  projectId: string,
+  orgId: string,
+  pkg: { name: string; ecosystem: string }
+): Promise<string> {
+  const lookup = { projectId, orgId, name: pkg.name, type: pkg.ecosystem, deletedAt: null } as const;
+  const existing = await db.source.findFirst({ where: lookup, select: { id: true } });
+  if (existing) return existing.id;
+  try {
+    const created = await db.source.create({
+      data: { projectId, orgId, name: pkg.name, type: pkg.ecosystem, status: "READY" },
+      select: { id: true },
+    });
+    return created.id;
+  } catch (error) {
+    // Concurrent syncs lose the unique-index race; adopt the winner's row.
+    if ((error as { code?: string }).code !== "P2002") throw error;
+    const winner = await db.source.findFirstOrThrow({ where: lookup, select: { id: true } });
+    return winner.id;
+  }
+}
+
 export async function autoSyncPackages(orgId: string): Promise<void> {
   const packages = await db.package.findMany({
     where: {
@@ -382,20 +402,15 @@ export async function autoSyncPackages(orgId: string): Promise<void> {
       if (shouldUpdate) {
         console.log(`📦 Re-indexing ${pkg.name}...`);
 
+        if (!pkg.projectId) {
+          console.warn(`⏭️  Skipping ${pkg.name} (no project context)`);
+          continue;
+        }
+        const packageSourceId = await ensurePackageSource(pkg.projectId, orgId, pkg);
         if (pkg.ecosystem === "npm") {
-          await syncNpmPackage({
-            packageName: pkg.name,
-            version: pkg.version,
-            projectId: "", // Will need project context
-            orgId,
-          });
+          await syncNpmPackage(packageSourceId, pkg.projectId, { packageName: pkg.name });
         } else if (pkg.ecosystem === "pypi") {
-          await syncPyPIPackage({
-            packageName: pkg.name,
-            version: pkg.version,
-            projectId: "",
-            orgId,
-          });
+          await syncPyPIPackage(packageSourceId, pkg.projectId, { packageName: pkg.name });
         }
 
         await db.package.update({
